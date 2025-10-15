@@ -69,41 +69,241 @@ export type Database = {
           },
         ]
       }
-      candidates: {
+      candidate_documents: {
         Row: {
+          arquivo_original: string | null
+          candidate_id: string
+          carga_horaria_pratica: number | null
+          carga_horaria_teorica: number | null
+          carga_horaria_total: number | null
+          catalog_document_id: string | null
           created_at: string
-          email: string
+          detail: string | null
+          document_category: string | null
+          document_name: string
+          document_type: string | null
+          expiry_date: string | null
+          file_url: string | null
+          group_name: string | null
           id: string
-          linkedin_url: string | null
-          name: string
-          phone: string | null
-          resume_url: string | null
-          status: string
+          issue_date: string | null
+          issuing_authority: string | null
+          link_validacao: string | null
+          modality: string | null
+          registration_number: string | null
+          sigla_documento: string | null
           updated_at: string
         }
         Insert: {
+          arquivo_original?: string | null
+          candidate_id: string
+          carga_horaria_pratica?: number | null
+          carga_horaria_teorica?: number | null
+          carga_horaria_total?: number | null
+          catalog_document_id?: string | null
           created_at?: string
-          email: string
+          detail?: string | null
+          document_category?: string | null
+          document_name: string
+          document_type?: string | null
+          expiry_date?: string | null
+          file_url?: string | null
+          group_name?: string | null
           id?: string
-          linkedin_url?: string | null
-          name: string
-          phone?: string | null
-          resume_url?: string | null
-          status?: string
+          issue_date?: string | null
+          issuing_authority?: string | null
+          link_validacao?: string | null
+          modality?: string | null
+          registration_number?: string | null
+          sigla_documento?: string | null
           updated_at?: string
         }
         Update: {
+          arquivo_original?: string | null
+          candidate_id?: string
+          carga_horaria_pratica?: number | null
+          carga_horaria_teorica?: number | null
+          carga_horaria_total?: number | null
+          catalog_document_id?: string | null
           created_at?: string
+          detail?: string | null
+          document_category?: string | null
+          document_name?: string
+          document_type?: string | null
+          expiry_date?: string | null
+          file_url?: string | null
+          group_name?: string | null
+          id?: string
+          issue_date?: string | null
+          issuing_authority?: string | null
+          link_validacao?: string | null
+          modality?: string | null
+          registration_number?: string | null
+          sigla_documento?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "candidate_documents_candidate_id_fkey"
+            columns: ["candidate_id"]
+            isOneToOne: false
+            referencedRelation: "candidates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "candidate_documents_catalog_document_id_fkey"
+            columns: ["catalog_document_id"]
+            isOneToOne: false
+            referencedRelation: "documents_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      candidate_history: {
+        Row: {
+          approved: boolean | null
+          candidate_id: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          event_date: string
+          id: string
+          updated_at: string
+          vacancy_id: string | null
+        }
+        Insert: {
+          approved?: boolean | null
+          candidate_id: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          event_date: string
+          id?: string
+          updated_at?: string
+          vacancy_id?: string | null
+        }
+        Update: {
+          approved?: boolean | null
+          candidate_id?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          event_date?: string
+          id?: string
+          updated_at?: string
+          vacancy_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "candidate_history_candidate_id_fkey"
+            columns: ["candidate_id"]
+            isOneToOne: false
+            referencedRelation: "candidates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "candidate_history_vacancy_id_fkey"
+            columns: ["vacancy_id"]
+            isOneToOne: false
+            referencedRelation: "vacancies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      candidates: {
+        Row: {
+          address_complement: string | null
+          address_district: string | null
+          address_number: string | null
+          address_street: string | null
+          address_type: string | null
+          blacklisted: boolean | null
+          city: string | null
+          cpf: string | null
+          created_at: string
+          cs_responsible_id: string | null
+          email: string
+          id: string
+          linkedin_url: string | null
+          matrix_id: string | null
+          name: string
+          notes: string | null
+          phone: string | null
+          phones: string | null
+          photo_url: string | null
+          resume_url: string | null
+          role_title: string | null
+          state: string | null
+          status: string
+          updated_at: string
+          working_status: string | null
+          zip_code: string | null
+        }
+        Insert: {
+          address_complement?: string | null
+          address_district?: string | null
+          address_number?: string | null
+          address_street?: string | null
+          address_type?: string | null
+          blacklisted?: boolean | null
+          city?: string | null
+          cpf?: string | null
+          created_at?: string
+          cs_responsible_id?: string | null
+          email: string
+          id?: string
+          linkedin_url?: string | null
+          matrix_id?: string | null
+          name: string
+          notes?: string | null
+          phone?: string | null
+          phones?: string | null
+          photo_url?: string | null
+          resume_url?: string | null
+          role_title?: string | null
+          state?: string | null
+          status?: string
+          updated_at?: string
+          working_status?: string | null
+          zip_code?: string | null
+        }
+        Update: {
+          address_complement?: string | null
+          address_district?: string | null
+          address_number?: string | null
+          address_street?: string | null
+          address_type?: string | null
+          blacklisted?: boolean | null
+          city?: string | null
+          cpf?: string | null
+          created_at?: string
+          cs_responsible_id?: string | null
           email?: string
           id?: string
           linkedin_url?: string | null
+          matrix_id?: string | null
           name?: string
+          notes?: string | null
           phone?: string | null
+          phones?: string | null
+          photo_url?: string | null
           resume_url?: string | null
+          role_title?: string | null
+          state?: string | null
           status?: string
           updated_at?: string
+          working_status?: string | null
+          zip_code?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "candidates_matrix_id_fkey"
+            columns: ["matrix_id"]
+            isOneToOne: false
+            referencedRelation: "matrices"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       documents: {
         Row: {
@@ -152,6 +352,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      documents_catalog: {
+        Row: {
+          categoria: string
+          created_at: string | null
+          detail: string | null
+          document_category: string | null
+          document_type: string | null
+          group_name: string | null
+          id: string
+          issuing_authority: string | null
+          modality: string | null
+          name: string
+          sigla_documento: string | null
+        }
+        Insert: {
+          categoria: string
+          created_at?: string | null
+          detail?: string | null
+          document_category?: string | null
+          document_type?: string | null
+          group_name?: string | null
+          id?: string
+          issuing_authority?: string | null
+          modality?: string | null
+          name: string
+          sigla_documento?: string | null
+        }
+        Update: {
+          categoria?: string
+          created_at?: string | null
+          detail?: string | null
+          document_category?: string | null
+          document_type?: string | null
+          group_name?: string | null
+          id?: string
+          issuing_authority?: string | null
+          modality?: string | null
+          name?: string
+          sigla_documento?: string | null
+        }
+        Relationships: []
       }
       evaluation_criteria: {
         Row: {
@@ -270,6 +512,87 @@ export type Database = {
             columns: ["criteria_id"]
             isOneToOne: false
             referencedRelation: "evaluation_criteria"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      matrices: {
+        Row: {
+          cargo: string
+          created_at: string | null
+          created_by: string | null
+          empresa: string
+          id: string
+          solicitado_por: string
+          user_email: string | null
+          versao_matriz: string
+        }
+        Insert: {
+          cargo: string
+          created_at?: string | null
+          created_by?: string | null
+          empresa: string
+          id?: string
+          solicitado_por: string
+          user_email?: string | null
+          versao_matriz: string
+        }
+        Update: {
+          cargo?: string
+          created_at?: string | null
+          created_by?: string | null
+          empresa?: string
+          id?: string
+          solicitado_por?: string
+          user_email?: string | null
+          versao_matriz?: string
+        }
+        Relationships: []
+      }
+      matrix_items: {
+        Row: {
+          carga_horaria: number | null
+          created_at: string | null
+          document_id: string | null
+          id: string
+          matrix_id: string | null
+          modalidade: string
+          obrigatoriedade: string
+          regra_validade: string
+        }
+        Insert: {
+          carga_horaria?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          matrix_id?: string | null
+          modalidade: string
+          obrigatoriedade: string
+          regra_validade: string
+        }
+        Update: {
+          carga_horaria?: number | null
+          created_at?: string | null
+          document_id?: string | null
+          id?: string
+          matrix_id?: string | null
+          modalidade?: string
+          obrigatoriedade?: string
+          regra_validade?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "matrix_items_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "matrix_items_matrix_id_fkey"
+            columns: ["matrix_id"]
+            isOneToOne: false
+            referencedRelation: "matrices"
             referencedColumns: ["id"]
           },
         ]

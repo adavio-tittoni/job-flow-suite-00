@@ -9,6 +9,8 @@ import Auth from "./pages/Auth";
 import Pipeline from "./pages/Pipeline";
 import Vacancies from "./pages/Vacancies";
 import Candidates from "./pages/Candidates";
+import CandidateDetail from "./pages/CandidateDetail";
+import ImportDocuments from "./pages/ImportDocuments";
 import Matrix from "./pages/Matrix";
 import Documents from "./pages/Documents";
 import NotFound from "./pages/NotFound";
@@ -28,6 +30,8 @@ const App = () => (
             <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
             <Route path="/vacancies" element={<ProtectedRoute><Vacancies /></ProtectedRoute>} />
             <Route path="/candidates" element={<ProtectedRoute><Candidates /></ProtectedRoute>} />
+            <Route path="/candidates/:id" element={<ProtectedRoute><CandidateDetail /></ProtectedRoute>} />
+            <Route path="/candidates/:id/import-documents" element={<ProtectedRoute><ImportDocuments /></ProtectedRoute>} />
             <Route path="/matrix" element={<ProtectedRoute><Matrix /></ProtectedRoute>} />
             <Route path="/documents" element={<ProtectedRoute><Documents /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />

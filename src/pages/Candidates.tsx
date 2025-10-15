@@ -1,16 +1,17 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CandidatesList } from "@/components/candidates/CandidatesList";
+
 export default function Candidates() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Candidatos</h1>
-        <p className="text-muted-foreground">Gerencie os candidatos cadastrados</p>
+    <div className="container mx-auto px-4 py-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-foreground">Candidatos</h1>
+        <p className="text-muted-foreground mt-2">
+          Gerencie e acompanhe todos os candidatos do sistema.
+        </p>
       </div>
-      
-      <div className="grid gap-4">
-        <div className="p-8 border-2 border-dashed border-border rounded-lg text-center">
-          <p className="text-muted-foreground">Módulo de candidatos em desenvolvimento</p>
-        </div>
-      </div>
+
+      <CandidatesList />
     </div>
   );
 }
