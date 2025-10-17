@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface N8nWebhookResponse {
   candidate_id: string;
@@ -25,38 +26,56 @@ interface N8nWebhookResponse {
 export const useN8nWebhookListener = () => {
   const [isListening, setIsListening] = useState(false);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
+    console.log('Setting up N8N webhook listener');
+    
     // Configurar listener para mudanças na tabela candidate_documents
     const channel = supabase
       .channel('candidate_documents_changes')
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
-          table: 'candidate_documents',
-          filter: 'document_type=eq.Processando...'
+          table: 'candidate_documents'
         },
         (payload) => {
-          console.log('Document updated:', payload);
-          handleDocumentUpdate(payload.new);
+          console.log('Document change detected in webhook listener:', payload);
+          console.log('Event type:', payload.eventType);
+          console.log('Document data:', payload.new);
+          
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            handleDocumentUpdate(payload.new);
+          } else if (payload.eventType === 'INSERT' && payload.new) {
+            console.log('New document inserted:', payload.new);
+            // Invalidar queries para mostrar o novo documento
+            queryClient.invalidateQueries({ queryKey: ["candidate-documents"] });
+            queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status"] });
+          }
         }
       )
-      .subscribe();
-
-    setIsListening(true);
+      .subscribe((status) => {
+        console.log('Webhook listener subscription status:', status);
+        setIsListening(status === 'SUBSCRIBED');
+      });
 
     return () => {
+      console.log('Cleaning up N8N webhook listener');
       supabase.removeChannel(channel);
       setIsListening(false);
     };
-  }, []);
+  }, [queryClient]); // Adicionar queryClient de volta para evitar warnings
 
   const handleDocumentUpdate = async (document: any) => {
     try {
       // Verificar se o documento foi atualizado com dados reais
       if (document.document_type !== 'Processando...' && document.document_name) {
+        // Invalidar queries para forçar atualização da UI
+        await queryClient.invalidateQueries({ queryKey: ["candidate-documents"] });
+        await queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status"] });
+        
         toast({
           title: "Documento processado",
           description: `O documento "${document.document_name}" foi processado com sucesso!`,
@@ -87,6 +106,10 @@ export const useN8nWebhookListener = () => {
         .eq('id', response.document_id);
 
       if (error) throw error;
+
+      // Invalidar queries para forçar atualização da UI
+      await queryClient.invalidateQueries({ queryKey: ["candidate-documents"] });
+      await queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status"] });
 
       toast({
         title: "Documento atualizado",

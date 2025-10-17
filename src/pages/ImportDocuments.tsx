@@ -26,7 +26,7 @@ const ImportDocumentsPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { createDocument } = useCandidateDocuments(candidateId!);
-  const { processDocumentWithAI, isProcessing: aiProcessing, progress: aiProgress, sendToN8nWebhook, createProcessingDocument } = useAIDocumentProcessing();
+  const { processDocumentWithAI, isProcessing: aiProcessing, progress: aiProgress, sendToN8nWebhook, createProcessingDocument, uploadFileToStorage } = useAIDocumentProcessing();
   const { toast } = useToast();
 
   const [importedDocuments, setImportedDocuments] = useState<ImportedDocument[]>([]);
@@ -98,7 +98,7 @@ const ImportDocumentsPage = () => {
       );
 
       // 1. Upload arquivo para storage
-      const fileUrl = await uploadFileToStorage(document.file);
+      const fileUrl = await uploadFileToStorage(document.file, candidateId!);
       setImportedDocuments(prev => 
         prev.map(doc => 
           doc.id === document.id 
@@ -169,16 +169,7 @@ const ImportDocumentsPage = () => {
     }
   };
 
-  const uploadFileToStorage = async (file: File): Promise<string> => {
-    const fileName = `${candidateId}/${Date.now()}_${file.name}`;
-    
-    const { error: uploadError } = await supabase.storage
-      .from('candidate-documents')
-      .upload(fileName, file);
-
-    if (uploadError) throw uploadError;
-    return fileName;
-  };
+  // Função removida - usando a do hook useAIDocumentProcessing
 
   const processAllDocuments = async () => {
     setIsProcessing(true);
@@ -422,10 +413,10 @@ const ImportDocumentsPage = () => {
                             const dataStr = JSON.stringify(document.extractedData, null, 2);
                             const dataBlob = new Blob([dataStr], { type: 'application/json' });
                             const url = URL.createObjectURL(dataBlob);
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.download = `${document.name}_status.json`;
-                            link.click();
+                            const linkElement = window.document.createElement('a');
+                            linkElement.href = url;
+                            linkElement.download = `${document.name}_status.json`;
+                            linkElement.click();
                           }}
                         >
                           <Download className="h-4 w-4 mr-1" />

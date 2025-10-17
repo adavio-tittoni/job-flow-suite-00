@@ -12,12 +12,26 @@ import { useCreateDocument, useUpdateDocument, useCheckDuplicateDocument, Docume
 import { useToast } from "@/hooks/use-toast";
 
 const documentSchema = z.object({
-  categoria: z.string().min(1, "Categoria é obrigatória"),
+  // Legacy fields
+  name: z.string().optional(),
+  group_name: z.string().optional(),
   document_category: z.string().optional(),
   document_type: z.string().optional(),
-  name: z.string().min(1, "Nome do documento é obrigatório"),
-  detail: z.string().optional(),
-  sigla_documento: z.string().optional(),
+  issuing_authority: z.string().optional(),
+  modality: z.string().optional(),
+  
+  // New unified fields
+  categoria: z.string().min(1, "Categoria é obrigatória"),
+  codigo: z.string().optional(),
+  sigla: z.string().optional(),
+  nome_curso: z.string().min(1, "Nome do curso é obrigatório"),
+  descricao_curso: z.string().optional(),
+  carga_horaria: z.string().optional(),
+  validade: z.string().optional(),
+  detalhes: z.string().optional(),
+  url_site: z.string().optional(),
+  flag_requisito: z.string().optional(),
+  nome_ingles: z.string().optional(),
 });
 
 type DocumentFormData = z.infer<typeof documentSchema>;
@@ -39,19 +53,34 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
   const form = useForm<DocumentFormData>({
     resolver: zodResolver(documentSchema),
     defaultValues: {
-      categoria: document?.categoria || "",
+      // Legacy fields
+      name: document?.name || "",
+      group_name: document?.group_name || "",
       document_category: document?.document_category || "",
       document_type: document?.document_type || "",
-      name: document?.name || "",
-      detail: document?.detail || "",
-      sigla_documento: document?.sigla_documento || "",
+      issuing_authority: document?.issuing_authority || "",
+      modality: document?.modality || "",
+      
+      // New unified fields
+      categoria: document?.categoria || "",
+      codigo: document?.codigo || "",
+      sigla: document?.sigla || "",
+      nome_curso: document?.nome_curso || "",
+      descricao_curso: document?.descricao_curso || "",
+      carga_horaria: document?.carga_horaria || "",
+      validade: document?.validade || "",
+      detalhes: document?.detalhes || "",
+      url_site: document?.url_site || "",
+      flag_requisito: document?.flag_requisito || "",
+      nome_ingles: document?.nome_ingles || "",
     },
   });
 
   const onSubmit = async (data: DocumentFormData) => {
     // Verificar se é uma criação e se já existe documento com o mesmo nome
     if (!document) {
-      const isDuplicate = await checkDuplicate.mutateAsync(data.name);
+      const documentName = data.nome_curso || data.name || '';
+      const isDuplicate = await checkDuplicate.mutateAsync(documentName);
       if (isDuplicate) {
         setPendingData(data);
         setShowDuplicateDialog(true);
@@ -111,7 +140,7 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
                   <FormItem>
                     <FormLabel>Categoria *</FormLabel>
                     <FormControl>
-                      <Input placeholder="Ex: Certificação" {...field} />
+                      <Input placeholder="Ex: CoC (Competência), NR-10, EPI" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -120,12 +149,12 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
-                name="document_category"
+                name="codigo"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Categoria do Documento</FormLabel>
+                    <FormLabel>Código</FormLabel>
                     <FormControl>
-                      <Input placeholder="Ex: Técnica" {...field} />
+                      <Input placeholder="Ex: A-II/1, NR-10, NR-6" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -134,12 +163,12 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
-                name="document_type"
+                name="sigla"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Tipo de Código</FormLabel>
+                    <FormLabel>Sigla</FormLabel>
                     <FormControl>
-                      <Input placeholder="Ex: CERT-001" {...field} />
+                      <Input placeholder="Ex: COCN, BST, CBSP" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -148,12 +177,12 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
-                name="sigla_documento"
+                name="nome_curso"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Sigla do Documento</FormLabel>
+                    <FormLabel>Nome do Curso *</FormLabel>
                     <FormControl>
-                      <Input placeholder="Ex: RG, CPF, CNH" {...field} />
+                      <Input placeholder="Ex: Oficial de Quarto de Navegação" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -162,12 +191,82 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
-                name="name"
+                name="carga_horaria"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Nome do Documento *</FormLabel>
+                    <FormLabel>Carga Horária</FormLabel>
                     <FormControl>
-                      <Input placeholder="Ex: Certificação de Segurança" {...field} />
+                      <Input placeholder="Ex: 40 h, 8-16 h" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="validade"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Validade</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ex: 5 anos, 2 anos" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="modalidade"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Modalidade</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ex: Presencial, EAD, Híbrido" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="url_site"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>URL do Site</FormLabel>
+                    <FormControl>
+                      <Input placeholder="https://exemplo.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="flag_requisito"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Flag Requisito</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ex: sim, não, sempre, depende" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="nome_ingles"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nome em Inglês</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ex: Officer in Charge of a Navigational Watch" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -177,13 +276,31 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
             <FormField
               control={form.control}
-              name="detail"
+              name="descricao_curso"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Descrição do Curso</FormLabel>
+                  <FormControl>
+                    <Textarea 
+                      placeholder="Descrição detalhada do curso..." 
+                      className="min-h-[100px]"
+                      {...field} 
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="detalhes"
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Detalhes</FormLabel>
                   <FormControl>
                     <Textarea 
-                      placeholder="Descrição adicional do documento..." 
+                      placeholder="Observações adicionais..." 
                       className="min-h-[100px]"
                       {...field} 
                     />
@@ -210,7 +327,7 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Documento Duplicado</AlertDialogTitle>
             <AlertDialogDescription>
-              Já existe um documento com o nome "{pendingData?.name}". Deseja criar mesmo assim?
+              Já existe um documento com o nome "{pendingData?.nome_curso || pendingData?.name}". Deseja criar mesmo assim?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

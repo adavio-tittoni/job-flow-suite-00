@@ -22,9 +22,7 @@ interface CandidateDocumentFormProps {
 }
 
 type DocumentFormData = Omit<CandidateDocument, "id" | "created_at" | "updated_at" | "candidate_id"> & {
-  detail?: string;
   arquivo_original?: string;
-  sigla_documento?: string;
 };
 
 interface CatalogDocument {
@@ -78,9 +76,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       carga_horaria_pratica: document.carga_horaria_pratica || undefined,
       link_validacao: document.link_validacao || "",
       file_url: document.file_url || "",
-      detail: document.detail || "",
       arquivo_original: document.arquivo_original || "",
-      sigla_documento: document.sigla_documento || "",
     } : prefilledData ? {
       group_name: prefilledData.group_name || "",
       document_name: prefilledData.document_name || "",
@@ -95,9 +91,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       carga_horaria_pratica: prefilledData.carga_horaria_pratica || undefined,
       link_validacao: prefilledData.link_validacao || "",
       file_url: prefilledData.file_url || "",
-      detail: prefilledData.detail || "",
       arquivo_original: prefilledData.arquivo_original || "",
-      sigla_documento: prefilledData.sigla_documento || "",
     } : {
       group_name: "",
       document_name: "",
@@ -112,9 +106,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       carga_horaria_pratica: undefined,
       link_validacao: "",
       file_url: "",
-      detail: "",
       arquivo_original: "",
-      sigla_documento: "",
     },
   });
 
@@ -335,7 +327,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
           
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="group_name">Departamento</Label>
+              <Label htmlFor="group_name">Categoria</Label>
               <Input
                 id="group_name"
                 {...register("group_name")}
@@ -441,23 +433,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
               />
             </div>
 
-            <div>
-              <Label htmlFor="detail">Detalhe</Label>
-              <Input
-                id="detail"
-                {...register("detail")}
-                placeholder="Informações adicionais"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="sigla_documento">Sigla do Documento</Label>
-              <Input
-                id="sigla_documento"
-                {...register("sigla_documento")}
-                placeholder="Ex: RG, CPF, CNH"
-              />
-            </div>
           </div>
         </div>
 

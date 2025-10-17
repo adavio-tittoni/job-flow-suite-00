@@ -8,6 +8,9 @@ import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import Auth from "./pages/Auth";
 import Pipeline from "./pages/Pipeline";
 import Vacancies from "./pages/Vacancies";
+import VacancyEditor from "./pages/VacancyEditor";
+import Users from "./pages/Users";
+import UserEditor from "./pages/UserEditor";
 import Candidates from "./pages/Candidates";
 import CandidateDetail from "./pages/CandidateDetail";
 import ImportDocuments from "./pages/ImportDocuments";
@@ -29,6 +32,11 @@ const App = () => (
             <Route path="/" element={<Navigate to="/pipeline" replace />} />
             <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
             <Route path="/vacancies" element={<ProtectedRoute><Vacancies /></ProtectedRoute>} />
+            <Route path="/vacancies/new" element={<ProtectedRoute><VacancyEditor /></ProtectedRoute>} />
+            <Route path="/vacancies/:id" element={<ProtectedRoute><VacancyEditor /></ProtectedRoute>} />
+            <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
+            <Route path="/users/new" element={<ProtectedRoute><UserEditor /></ProtectedRoute>} />
+            <Route path="/users/:id" element={<ProtectedRoute><UserEditor /></ProtectedRoute>} />
             <Route path="/candidates" element={<ProtectedRoute><Candidates /></ProtectedRoute>} />
             <Route path="/candidates/:id" element={<ProtectedRoute><CandidateDetail /></ProtectedRoute>} />
             <Route path="/candidates/:id/import-documents" element={<ProtectedRoute><ImportDocuments /></ProtectedRoute>} />

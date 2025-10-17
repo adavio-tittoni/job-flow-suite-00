@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,7 +7,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from "@/components/ui/badge";
 import { useDocumentsCatalog, useDeleteDocument, DocumentCatalog } from "@/hooks/useDocuments";
 import { DocumentForm } from "@/components/DocumentForm";
-import { Plus, Search, Edit, Trash2, Download, Upload } from "lucide-react";
+import { ImportResultsDialog } from "@/components/ImportResultsDialog";
+import { CSVInstructionsDialog } from "@/components/CSVInstructionsDialog";
+import { useDocumentImportExport, ImportResult } from "@/hooks/useDocumentImportExport";
+import { Plus, Search, Edit, Trash2, Download, Upload, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Documents() {
@@ -15,27 +18,33 @@ export default function Documents() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [selectedDocument, setSelectedDocument] = useState<DocumentCatalog | undefined>();
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [showImportResults, setShowImportResults] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const { data: documents = [], isLoading } = useDocumentsCatalog();
   const deleteDocument = useDeleteDocument();
   const { toast } = useToast();
+  const { exportTemplate, exportDocuments, importDocuments, isImporting, isExporting } = useDocumentImportExport();
 
   // Filtrar documentos
   const filteredDocuments = documents.filter(doc => {
     const matchesSearch = 
-      doc.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      doc.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (doc.document_category && doc.document_category.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (doc.document_type && doc.document_type.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (doc.sigla_documento && doc.sigla_documento.toLowerCase().includes(searchTerm.toLowerCase()));
+      (doc.nome_curso && doc.nome_curso.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (doc.name && doc.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (doc.categoria && doc.categoria.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (doc.codigo && doc.codigo.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (doc.sigla && doc.sigla.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (doc.sigla_documento && doc.sigla_documento.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (doc.descricao_curso && doc.descricao_curso.toLowerCase().includes(searchTerm.toLowerCase()));
     
-    const matchesCategory = !categoryFilter || doc.categoria === categoryFilter;
+    const matchesCategory = !categoryFilter || (doc.categoria || doc.group_name) === categoryFilter;
     
     return matchesSearch && matchesCategory;
   });
 
   // Obter categorias únicas para o filtro
-  const categories = Array.from(new Set(documents.map(doc => doc.categoria)));
+  const categories = Array.from(new Set(documents.map(doc => doc.categoria || doc.group_name).filter(Boolean)));
 
   const handleEdit = (document: DocumentCatalog) => {
     setSelectedDocument(document);
@@ -63,35 +72,42 @@ export default function Documents() {
   };
 
   const handleExportCSV = () => {
-    const csvContent = [
-      ["Categoria", "Categoria do Documento", "Tipo de Código", "Sigla do Documento", "Nome do Documento", "Detalhes"],
-      ...filteredDocuments.map(doc => [
-        doc.categoria,
-        doc.document_category || "",
-        doc.document_type || "",
-        doc.sigla_documento || "",
-        doc.name,
-        doc.detail || ""
-      ])
-    ].map(row => row.map(field => `"${field}"`).join(",")).join("\n");
+    exportDocuments(filteredDocuments);
+  };
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", "documentos.csv");
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleExportTemplate = () => {
+    exportTemplate();
   };
 
   const handleImportCSV = () => {
-    // TODO: Implementar importação CSV
-    toast({
-      title: "Funcionalidade em desenvolvimento",
-      description: "A importação CSV será implementada em breve.",
-    });
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      toast({
+        title: "Arquivo inválido",
+        description: "Por favor, selecione um arquivo CSV.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const result = await importDocuments(file);
+      setImportResult(result);
+      setShowImportResults(true);
+    } catch (error) {
+      console.error('Erro ao importar:', error);
+    }
+
+    // Limpar o input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   if (isLoading) {
@@ -116,13 +132,19 @@ export default function Documents() {
           <p className="text-muted-foreground">Catálogo de documentos do sistema</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExportCSV}>
+          <CSVInstructionsDialog>
+            <Button variant="outline" disabled={isExporting}>
+              <FileText className="h-4 w-4 mr-2" />
+              {isExporting ? 'Exportando...' : 'Baixar Modelo'}
+            </Button>
+          </CSVInstructionsDialog>
+          <Button variant="outline" onClick={handleExportCSV} disabled={isExporting}>
             <Download className="h-4 w-4 mr-2" />
-            Exportar CSV
+            {isExporting ? 'Exportando...' : 'Exportar CSV'}
           </Button>
-          <Button variant="outline" onClick={handleImportCSV}>
+          <Button variant="outline" onClick={handleImportCSV} disabled={isImporting}>
             <Upload className="h-4 w-4 mr-2" />
-            Importar CSV
+            {isImporting ? 'Importando...' : 'Importar CSV'}
           </Button>
           <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
             <DialogTrigger asChild>
@@ -174,18 +196,19 @@ export default function Documents() {
           <TableHeader>
             <TableRow>
               <TableHead>Categoria</TableHead>
-              <TableHead>Categoria do Documento</TableHead>
-              <TableHead>Tipo de Código</TableHead>
-              <TableHead>Sigla do Documento</TableHead>
-              <TableHead>Nome do Documento</TableHead>
-              <TableHead>Detalhes</TableHead>
+              <TableHead>Código</TableHead>
+              <TableHead>Sigla</TableHead>
+              <TableHead>Nome do Curso</TableHead>
+              <TableHead>Carga Horária</TableHead>
+              <TableHead>Validade</TableHead>
+              <TableHead>Modalidade</TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredDocuments.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   {searchTerm || categoryFilter ? "Nenhum documento encontrado" : "Nenhum documento cadastrado"}
                 </TableCell>
               </TableRow>
@@ -193,13 +216,14 @@ export default function Documents() {
               filteredDocuments.map((document) => (
                 <TableRow key={document.id}>
                   <TableCell>
-                    <Badge variant="secondary">{document.categoria}</Badge>
+                    <Badge variant="secondary">{document.categoria || document.group_name || "-"}</Badge>
                   </TableCell>
-                  <TableCell>{document.document_category || "-"}</TableCell>
-                  <TableCell>{document.document_type || "-"}</TableCell>
-                  <TableCell>{document.sigla_documento || "-"}</TableCell>
-                  <TableCell className="font-medium">{document.name}</TableCell>
-                  <TableCell className="max-w-xs truncate">{document.detail || "-"}</TableCell>
+                  <TableCell>{document.codigo || "-"}</TableCell>
+                  <TableCell>{document.sigla || document.sigla_documento || "-"}</TableCell>
+                  <TableCell className="font-medium">{document.nome_curso || document.name || "-"}</TableCell>
+                  <TableCell>{document.carga_horaria || "-"}</TableCell>
+                  <TableCell>{document.validade || "-"}</TableCell>
+                  <TableCell>{document.modalidade || "-"}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
                       <Button
@@ -249,6 +273,22 @@ export default function Documents() {
         {searchTerm && ` para "${searchTerm}"`}
         {categoryFilter && ` na categoria "${categoryFilter}"`}
       </div>
+
+      {/* Input de arquivo oculto */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv"
+        onChange={handleFileChange}
+        style={{ display: 'none' }}
+      />
+
+      {/* Dialog de resultados da importação */}
+      <ImportResultsDialog
+        isOpen={showImportResults}
+        onClose={() => setShowImportResults(false)}
+        result={importResult}
+      />
     </div>
   );
 }

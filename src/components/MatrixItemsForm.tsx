@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -32,6 +33,10 @@ interface Document {
   name: string;
   categoria: string;
   document_type?: string;
+  sigla_documento?: string;
+  codigo?: string;
+  sigla?: string;
+  nome_curso?: string;
 }
 
 interface MatrixItemsFormProps {
@@ -79,28 +84,118 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
     const loadDocuments = async () => {
       const { data, error } = await supabase
         .from('documents_catalog')
-        .select('id, name, categoria, document_type')
+        .select('*')
         .order('name');
       
       if (!error && data) {
+        console.log('Documents loaded:', data.length, 'documents');
+        console.log('Sample document:', data[0]);
+        
+        // Check if NR-35 document is loaded
+        const nr35Doc = data.find(doc => (doc as any).codigo === 'NR-35');
+        if (nr35Doc) {
+          console.log('NR-35 document found:', nr35Doc);
+        } else {
+          console.log('NR-35 document NOT found in loaded data');
+          console.log('Available codigos:', data.map(doc => (doc as any).codigo).filter(Boolean));
+        }
+        
         setDocuments(data);
+      } else if (error) {
+        console.error('Error loading documents:', error);
       }
     };
     
     loadDocuments();
   }, []);
 
+  // Reset form when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      clearForm();
+    }
+  }, [isOpen]);
+
   // Filter documents based on search
-  const filteredDocuments = documents.filter(doc =>
-    doc.name.toLowerCase().includes(searchValue.toLowerCase()) ||
-    doc.categoria.toLowerCase().includes(searchValue.toLowerCase())
-  );
+  const filteredDocuments = documents.filter(doc => {
+    if (!searchValue.trim()) return true;
+    
+    const searchTerm = searchValue.toLowerCase().trim();
+    
+    // Check each field individually for better debugging
+    const nameMatch = doc.name && doc.name.toLowerCase().includes(searchTerm);
+    const categoriaMatch = doc.categoria && doc.categoria.toLowerCase().includes(searchTerm);
+    const siglaMatch = (doc as any).sigla && (doc as any).sigla.toLowerCase().includes(searchTerm);
+    const siglaDocMatch = doc.sigla_documento && doc.sigla_documento.toLowerCase().includes(searchTerm);
+    const codigoMatch = (doc as any).codigo && (doc as any).codigo.toLowerCase().includes(searchTerm);
+    const nomeCursoMatch = (doc as any).nome_curso && (doc as any).nome_curso.toLowerCase().includes(searchTerm);
+    const docTypeMatch = doc.document_type && doc.document_type.toLowerCase().includes(searchTerm);
+    
+    const matches = nameMatch || categoriaMatch || siglaMatch || siglaDocMatch || codigoMatch || nomeCursoMatch || docTypeMatch;
+    
+    // Debug log for "35" search
+    if (searchTerm === '35') {
+      console.log('Searching for "35":', {
+        docName: doc.name,
+        codigo: (doc as any).codigo,
+        sigla: (doc as any).sigla,
+        sigla_documento: doc.sigla_documento,
+        categoria: doc.categoria,
+        nome_curso: (doc as any).nome_curso,
+        document_type: doc.document_type,
+        nameMatch,
+        categoriaMatch,
+        siglaMatch,
+        siglaDocMatch,
+        codigoMatch,
+        nomeCursoMatch,
+        docTypeMatch,
+        matches,
+        searchTerm
+      });
+      
+      // Special log for NR-35 document
+      if ((doc as any).codigo === 'NR-35') {
+        console.log('*** FOUND NR-35 DOCUMENT ***', {
+          doc,
+          codigoMatch,
+          matches,
+          searchTerm
+        });
+      }
+    }
+    
+    return matches;
+  });
+
+  // Debug log for filtered results
+  if (searchValue === '35') {
+    console.log('Filtered documents count:', filteredDocuments.length);
+    console.log('Filtered documents:', filteredDocuments.map(doc => ({
+      name: doc.name,
+      codigo: (doc as any).codigo,
+      sigla: (doc as any).sigla
+    })));
+  }
 
   const handleDocumentSelect = (doc: Document) => {
+    console.log('handleDocumentSelect called with:', doc);
     setSelectedDocument(doc);
     setValue("document_id", doc.id);
     setIsComboOpen(false);
-    setSearchValue(doc.name);
+    // Show name with sigla and codigo if available
+    const parts = [doc.name || (doc as any).nome_curso];
+    if ((doc as any).sigla) {
+      parts.push(`(${(doc as any).sigla})`);
+    }
+    if (doc.sigla_documento) {
+      parts.push(`(${doc.sigla_documento})`);
+    }
+    if ((doc as any).codigo) {
+      parts.push(`[${(doc as any).codigo}]`);
+    }
+    setSearchValue(parts.join(' '));
+    console.log('Document selected successfully:', parts.join(' '));
   };
 
   const onSubmit = async (data: MatrixItemFormData) => {
@@ -116,9 +211,8 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
         description: "O item foi adicionado à matriz com sucesso.",
       });
       
-      reset();
-      setSelectedDocument(null);
-      setSearchValue("");
+      // Reset form and clear all states
+      clearForm();
     } catch (error: any) {
       toast({
         title: "Erro",
@@ -160,10 +254,21 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
     }
   };
 
-  const handleClose = () => {
-    reset();
+  const clearForm = () => {
+    reset({
+      document_id: "",
+      obrigatoriedade: "",
+      carga_horaria: undefined,
+      modalidade: "",
+      regra_validade: "",
+    });
     setSelectedDocument(null);
     setSearchValue("");
+    setIsComboOpen(false);
+  };
+
+  const handleClose = () => {
+    clearForm();
     onClose();
   };
 
@@ -196,7 +301,10 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="document">Documento</Label>
-                    <Popover open={isComboOpen} onOpenChange={setIsComboOpen}>
+                    <Popover open={isComboOpen} onOpenChange={(open) => {
+                      console.log('Popover open changed:', open);
+                      setIsComboOpen(open);
+                    }}>
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
@@ -204,26 +312,58 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
                           aria-expanded={isComboOpen}
                           className="w-full justify-between"
                         >
-                          {selectedDocument ? selectedDocument.name : "Selecionar documento..."}
+                          {selectedDocument ? (
+                            <div className="flex items-center gap-2">
+                              <span>{selectedDocument.name || selectedDocument.nome_curso}</span>
+                              {selectedDocument.sigla && (
+                                <Badge variant="outline" className="text-xs">
+                                  {selectedDocument.sigla}
+                                </Badge>
+                              )}
+                              {selectedDocument.sigla_documento && (
+                                <Badge variant="outline" className="text-xs">
+                                  {selectedDocument.sigla_documento}
+                                </Badge>
+                              )}
+                              {selectedDocument.codigo && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {selectedDocument.codigo}
+                                </Badge>
+                              )}
+                            </div>
+                          ) : (
+                            "Selecionar documento..."
+                          )}
                           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-full p-0">
                         <Command>
                           <CommandInput
-                            placeholder="Buscar documento..."
+                            placeholder="Buscar por nome, categoria, sigla ou código..."
                             value={searchValue}
                             onValueChange={setSearchValue}
                           />
                           <CommandList>
-                            <CommandEmpty>Nenhum documento encontrado.</CommandEmpty>
-                            <CommandGroup>
-                              <ScrollArea className="h-48">
-                                {filteredDocuments.map((doc) => (
+                            {filteredDocuments.length === 0 ? (
+                              <CommandEmpty>Nenhum documento encontrado.</CommandEmpty>
+                            ) : (
+                              <CommandGroup>
+                                <ScrollArea className="h-48">
+                                  {(() => {
+                                    if (searchValue === '35') {
+                                      console.log('Rendering documents:', filteredDocuments.length, 'documents');
+                                    }
+                                    return null;
+                                  })()}
+                                  {filteredDocuments.map((doc) => (
                                   <CommandItem
                                     key={doc.id}
-                                    value={doc.name}
-                                    onSelect={() => handleDocumentSelect(doc)}
+                                    value={`${doc.name} ${(doc as any).codigo || ''} ${(doc as any).sigla || ''}`.trim()}
+                                    onSelect={() => {
+                                      console.log('Selecting document:', doc);
+                                      handleDocumentSelect(doc);
+                                    }}
                                   >
                                     <Check
                                       className={cn(
@@ -232,15 +372,33 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
                                       )}
                                     />
                                     <div className="flex flex-col">
-                                      <span>{doc.name}</span>
+                                      <div className="flex items-center gap-2">
+                                        <span>{doc.name || doc.nome_curso}</span>
+                                        {doc.sigla && (
+                                          <Badge variant="outline" className="text-xs">
+                                            {doc.sigla}
+                                          </Badge>
+                                        )}
+                                        {doc.sigla_documento && (
+                                          <Badge variant="outline" className="text-xs">
+                                            {doc.sigla_documento}
+                                          </Badge>
+                                        )}
+                                        {doc.codigo && (
+                                          <Badge variant="secondary" className="text-xs">
+                                            {doc.codigo}
+                                          </Badge>
+                                        )}
+                                      </div>
                                       <span className="text-sm text-muted-foreground">
                                         {doc.categoria}
                                       </span>
                                     </div>
                                   </CommandItem>
-                                ))}
-                              </ScrollArea>
-                            </CommandGroup>
+                                  ))}
+                                </ScrollArea>
+                              </CommandGroup>
+                            )}
                           </CommandList>
                         </Command>
                       </PopoverContent>

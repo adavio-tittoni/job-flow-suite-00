@@ -181,6 +181,7 @@ export const useCandidateDocuments = (candidateId: string) => {
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ["candidate-documents", candidateId],
     queryFn: async () => {
+      console.log('Fetching documents for candidate:', candidateId);
       const { data, error } = await supabase
         .from("candidate_documents")
         .select(`
@@ -203,9 +204,13 @@ export const useCandidateDocuments = (candidateId: string) => {
         documents_catalog: undefined // Remove the nested object
       })) || [];
       
+      console.log('Documents fetched:', transformedData.length);
       return transformedData as CandidateDocument[];
     },
     enabled: !!candidateId,
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+    staleTime: 0, // Sempre considerar os dados como stale
   });
 
   const createDocument = useMutation({

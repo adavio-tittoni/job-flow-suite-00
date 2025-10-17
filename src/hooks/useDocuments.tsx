@@ -3,13 +3,28 @@ import { supabase } from "@/integrations/supabase/client";
 
 export interface DocumentCatalog {
   id: string;
-  categoria: string;
+  name: string;
+  group_name?: string;
   document_category?: string;
   document_type?: string;
-  name: string;
+  issuing_authority?: string;
+  modality?: string;
+  sigla_documento?: string;
   detail?: string;
   created_at: string;
-  sigla_documento?: string;
+  
+  // New unified fields (may not exist in all records)
+  categoria?: string;
+  codigo?: string;
+  sigla?: string;
+  nome_curso?: string;
+  descricao_curso?: string;
+  carga_horaria?: string;
+  validade?: string;
+  detalhes?: string;
+  url_site?: string;
+  flag_requisito?: string;
+  nome_ingles?: string;
 }
 
 export function useDocumentsCatalog() {

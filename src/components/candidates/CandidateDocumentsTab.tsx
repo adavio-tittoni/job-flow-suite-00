@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Edit, Trash2, FileDown, Eye, Upload } from "lucide-react";
+import { Plus, Edit, Trash2, FileDown, Eye, Upload, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 
 // Utility function to safely format dates
@@ -34,6 +34,8 @@ import { CandidateIndicators } from "./CandidateIndicators";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useCandidateRequirementStatus, type RequirementStatus } from "@/hooks/useCandidateRequirementStatus";
+import { useN8nWebhookListener } from "@/hooks/useN8nWebhookListener";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface CandidateDocumentsTabProps {
   candidateId: string;
@@ -42,11 +44,15 @@ interface CandidateDocumentsTabProps {
 
 export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateDocumentsTabProps) => {
   const navigate = useNavigate();
-  const { documents, isLoading, deleteDocument } = useCandidateDocuments(candidateId);
+  const queryClient = useQueryClient();
+  const { documents, isLoading, deleteDocument, refetch } = useCandidateDocuments(candidateId);
   const [selectedDocument, setSelectedDocument] = useState<CandidateDocument | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  
+  // Webhook listener para atualizações de documentos
+  const { isListening } = useN8nWebhookListener();
   
   // Preview modal states
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -64,6 +70,43 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
 
   // Get requirement status for pending items
   const { data: requirementStatus } = useCandidateRequirementStatus(candidateId);
+
+  // Escutar mudanças nos documentos via Supabase realtime
+  useEffect(() => {
+    console.log('Setting up realtime listener for candidate:', candidateId);
+    
+    const channel = supabase
+      .channel(`candidate_documents_${candidateId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'candidate_documents',
+          filter: `candidate_id=eq.${candidateId}`
+        },
+        (payload) => {
+          console.log('Document change detected:', payload);
+          console.log('Event type:', payload.eventType);
+          console.log('New data:', payload.new);
+          
+          // Invalidar e refazer a query para atualizar a UI
+          queryClient.invalidateQueries({ queryKey: ["candidate-documents", candidateId] });
+          queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidateId] });
+          
+          // Forçar refetch imediato
+          queryClient.refetchQueries({ queryKey: ["candidate-documents", candidateId] });
+        }
+      )
+      .subscribe((status) => {
+        console.log('Realtime subscription status:', status);
+      });
+
+    return () => {
+      console.log('Cleaning up realtime listener for candidate:', candidateId);
+      supabase.removeChannel(channel);
+    };
+  }, [candidateId, queryClient]);
 
   // Function to get automatic observation for a document based on matrix requirements
   const getDocumentObservation = (document: CandidateDocument): string => {
@@ -257,10 +300,11 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
 
     // Prepare CSV data (only valid documents, no observation)
     const csvData = validDocuments.map(doc => ({
-      'Departamento': doc.group_name || '',
-      'Tipo': doc.document_category || 'N/A', // Always use document_category from catalog
-      'Sigla': doc.sigla_documento || '',
+      'Grupo': doc.group_name || '',
+      'Categoria': doc.document_category || 'N/A', // Always use document_category from catalog
+      'Tipo': doc.document_type || '',
       'Documento': doc.document_name || '',
+      'Autoridade Emissora': doc.issuing_authority || '',
       'Modalidade': doc.modality || '',
       'Data Emissão': safeFormatDate(doc.issue_date),
       'Data Validade': safeFormatDate(doc.expiry_date),
@@ -443,19 +487,19 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
           <CardContent>
             <div className="rounded-md border">
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Departamento</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead>Documento</TableHead>
-                    <TableHead>Obrigatoriedade</TableHead>
-                    <TableHead>Horas Total</TableHead>
-                    <TableHead>Modalidade</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Observação</TableHead>
-                    <TableHead>Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Categoria</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Documento</TableHead>
+                      <TableHead>Obrigatoriedade</TableHead>
+                      <TableHead>Horas Total</TableHead>
+                      <TableHead>Modalidade</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Observação</TableHead>
+                      <TableHead>Ações</TableHead>
+                    </TableRow>
+                  </TableHeader>
                 <TableBody>
                   {requirementStatus.pendingItems.map((item, index) => (
                     <TableRow key={index}>
@@ -622,6 +666,15 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
               
               <Button 
                 variant="outline" 
+                onClick={() => refetch()}
+                disabled={isLoading}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Atualizar
+              </Button>
+              
+              <Button 
+                variant="outline" 
                 onClick={() => navigate(`/candidates/${candidateId}/import-documents`)}
               >
                 <Upload className="h-4 w-4 mr-2" />
@@ -660,7 +713,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
             <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Departamento</TableHead>
+                      <TableHead>Categoria</TableHead>
                       <TableHead>Tipo</TableHead>
                       <TableHead>Sigla</TableHead>
                       <TableHead>Documento</TableHead>
