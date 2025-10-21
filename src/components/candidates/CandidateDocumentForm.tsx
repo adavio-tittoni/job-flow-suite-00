@@ -31,6 +31,8 @@ interface CatalogDocument {
   group_name: string;
   document_type: string | null;
   document_category: string | null;
+  categoria: string | null;
+  sigla_documento: string | null;
   modality: string | null;
   issuing_authority: string | null;
 }
@@ -77,6 +79,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       link_validacao: document.link_validacao || "",
       file_url: document.file_url || "",
       arquivo_original: document.arquivo_original || "",
+      codigo: document.codigo || "",
     } : prefilledData ? {
       group_name: prefilledData.group_name || "",
       document_name: prefilledData.document_name || "",
@@ -92,6 +95,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       link_validacao: prefilledData.link_validacao || "",
       file_url: prefilledData.file_url || "",
       arquivo_original: prefilledData.arquivo_original || "",
+      codigo: prefilledData.codigo || "",
     } : {
       group_name: "",
       document_name: "",
@@ -107,6 +111,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       link_validacao: "",
       file_url: "",
       arquivo_original: "",
+      codigo: "",
     },
   });
 
@@ -115,7 +120,7 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
     const loadCatalogDocuments = async () => {
       const { data, error } = await supabase
         .from('documents_catalog')
-        .select('id, name, group_name, document_type, document_category, modality, issuing_authority')
+        .select('id, name, group_name, document_type, document_category, categoria, sigla_documento, modality, issuing_authority')
         .order('name');
       
       if (!error && data) {
@@ -330,7 +335,10 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
               <Label htmlFor="group_name">Categoria</Label>
               <Input
                 id="group_name"
-                {...register("group_name")}
+                value={selectedCatalogDoc?.categoria || ""}
+                placeholder="Preenchido automaticamente"
+                readOnly
+                className="bg-muted"
               />
             </div>
             
@@ -414,14 +422,27 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
 
           <div className="grid grid-cols-3 gap-4">
             <div>
-              <Label htmlFor="document_type">Tipo (do catálogo)</Label>
+              <Label htmlFor="sigla_documento">Sigla</Label>
               <Input
-                id="document_type"
-                value={selectedCatalogDoc?.document_category || "N/A"}
+                id="sigla_documento"
+                value={selectedCatalogDoc?.sigla_documento || "N/A"}
                 placeholder="Preenchido automaticamente"
                 readOnly
                 className="bg-muted"
               />
+            </div>
+            
+            <div>
+              <Label htmlFor="codigo">Tipo de Código *</Label>
+              <Input
+                id="codigo"
+                {...register("codigo")}
+                placeholder="Ex: NR-35, NR-37, STWC, etc."
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Código usado para comparação com a matriz
+              </p>
             </div>
             
             <div>

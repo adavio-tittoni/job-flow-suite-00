@@ -31,6 +31,7 @@ import { CandidateDocumentForm } from "./CandidateDocumentForm";
 import { useNavigate } from "react-router-dom";
 
 import { CandidateIndicators } from "./CandidateIndicators";
+import { EnhancedDocumentsView } from "../EnhancedDocumentsView";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useCandidateRequirementStatus, type RequirementStatus } from "@/hooks/useCandidateRequirementStatus";
@@ -50,6 +51,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<string | null>(null);
+  const [candidateMatrixId, setCandidateMatrixId] = useState<string | null>(null);
   
   // Webhook listener para atualizações de documentos
   const { isListening } = useN8nWebhookListener();
@@ -70,6 +72,37 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
 
   // Get requirement status for pending items
   const { data: requirementStatus } = useCandidateRequirementStatus(candidateId);
+
+  // Fetch candidate matrix_id and listen for changes
+  useEffect(() => {
+    const fetchCandidateMatrix = async () => {
+      const { data, error } = await supabase
+        .from('candidates')
+        .select('matrix_id')
+        .eq('id', candidateId)
+        .single();
+      
+      if (!error && data) {
+        setCandidateMatrixId(data.matrix_id);
+      }
+    };
+
+    fetchCandidateMatrix();
+  }, [candidateId]);
+
+  // Listen for matrix changes and refresh data
+  useEffect(() => {
+    if (candidateMatrixId) {
+      console.log('Matrix changed, refreshing comparison data for matrix:', candidateMatrixId);
+      // Force refresh of all related queries
+      queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidateId] });
+      queryClient.invalidateQueries({ queryKey: ["advanced-matrix-comparison", candidateId] });
+      queryClient.invalidateQueries({ queryKey: ["enhanced-matrix-comparison", candidateId] });
+      
+      // Force immediate refetch
+      queryClient.refetchQueries({ queryKey: ["candidate-requirement-status", candidateId] });
+    }
+  }, [candidateMatrixId, candidateId, queryClient]);
 
   // Escutar mudanças nos documentos via Supabase realtime
   useEffect(() => {
@@ -107,6 +140,46 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       supabase.removeChannel(channel);
     };
   }, [candidateId, queryClient]);
+
+  // Listen for candidate matrix changes via realtime
+  useEffect(() => {
+    console.log('Setting up candidate matrix change listener for:', candidateId);
+    
+    const matrixChannel = supabase
+      .channel(`candidate_matrix_${candidateId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'candidates',
+          filter: `id=eq.${candidateId}`,
+        },
+        (payload) => {
+          console.log('Candidate matrix change detected:', payload);
+          const newMatrixId = payload.new?.matrix_id;
+          if (newMatrixId !== candidateMatrixId) {
+            console.log('Matrix ID changed from', candidateMatrixId, 'to', newMatrixId);
+            setCandidateMatrixId(newMatrixId);
+            // Force refresh of all comparison data
+            queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidateId] });
+            queryClient.invalidateQueries({ queryKey: ["advanced-matrix-comparison", candidateId] });
+            queryClient.invalidateQueries({ queryKey: ["enhanced-matrix-comparison", candidateId] });
+            
+            // Force immediate refetch
+            queryClient.refetchQueries({ queryKey: ["candidate-requirement-status", candidateId] });
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Candidate matrix realtime subscription status:', status);
+      });
+
+    return () => {
+      console.log('Cleaning up candidate matrix listener for:', candidateId);
+      supabase.removeChannel(matrixChannel);
+    };
+  }, [candidateId, candidateMatrixId, queryClient]);
 
   // Function to get automatic observation for a document based on matrix requirements
   const getDocumentObservation = (document: CandidateDocument): string => {
@@ -472,82 +545,38 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       {/* Indicators Dashboard */}
       <CandidateIndicators candidateId={candidateId} />
 
-      {/* Pending Documents Card */}
-      {requirementStatus && requirementStatus.pendingItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Documentos Pendentes</CardTitle>
-              <Button variant="outline" size="sm" onClick={handleExportPending}>
-                <FileDown className="h-4 w-4 mr-2" />
-                Exportar Pendentes
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-md border">
-              <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead>Tipo</TableHead>
-                      <TableHead>Documento</TableHead>
-                      <TableHead>Obrigatoriedade</TableHead>
-                      <TableHead>Horas Total</TableHead>
-                      <TableHead>Modalidade</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Observação</TableHead>
-                      <TableHead>Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                <TableBody>
-                  {requirementStatus.pendingItems.map((item, index) => (
-                    <TableRow key={index}>
-                      <TableCell>{item.groupName}</TableCell>
-                      <TableCell>{item.documentCategory || '-'}</TableCell>
-                      <TableCell className="font-medium">{item.documentName}</TableCell>
-                      <TableCell>{item.obrigatoriedade || '-'}</TableCell>
-                      <TableCell>{item.requiredHours ? `${item.requiredHours}h` : '-'}</TableCell>
-                      <TableCell>{item.modality || '-'}</TableCell>
-                      <TableCell>
-                        <Badge variant={item.status === 'pending' ? 'destructive' : 'warning'}>
-                          {item.status === 'pending' ? 'Pendente' : 'Parcial'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {item.observation}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          {item.existingCandidateDocument ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditPendingDocument(item)}
-                              title="Editar documento existente"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleAddPendingDocument(item)}
-                              title="Adicionar documento"
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Enhanced Documents View */}
+      <EnhancedDocumentsView 
+        candidateId={candidateId}
+        matrixId={candidateMatrixId}
+        onAddDocument={(catalogDocId) => {
+          // Buscar dados do documento do catálogo para preencher o formulário
+          supabase
+            .from('documents_catalog')
+            .select('*')
+            .eq('id', catalogDocId)
+            .single()
+            .then(({ data, error }) => {
+              if (!error && data) {
+                setPrefilledData({
+                  document_name: data.name,
+                  group_name: data.group_name,
+                  document_category: data.document_category,
+                  document_type: data.document_type,
+                  codigo: data.codigo,
+                  catalog_document_id: catalogDocId,
+                });
+                setIsFormOpen(true);
+              }
+            });
+        }}
+        onViewDocument={(documentId) => {
+          const doc = documents.find(d => d.id === documentId);
+          if (doc) {
+            handleViewDocument(doc);
+          }
+        }}
+      />
 
       {/* Document Preview Modal */}
       <Dialog open={isPreviewOpen} onOpenChange={(open) => {
@@ -714,8 +743,8 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                   <TableHeader>
                     <TableRow>
                       <TableHead>Categoria</TableHead>
-                      <TableHead>Tipo</TableHead>
                       <TableHead>Sigla</TableHead>
+                      <TableHead>Código</TableHead>
                       <TableHead>Documento</TableHead>
                       <TableHead>Horas Total</TableHead>
                       <TableHead>Modalidade</TableHead>
@@ -728,9 +757,9 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
               <TableBody>
                 {validDocuments.map((document) => (
                   <TableRow key={document.id}>
-                     <TableCell>{document.group_name || "-"}</TableCell>
-                     <TableCell>{document.document_category || "N/A"}</TableCell>
-                     <TableCell>{document.sigla_documento || "-"}</TableCell>
+                     <TableCell>{document.document_category || "-"}</TableCell>
+                     <TableCell>{document.sigla_documento || "N/A"}</TableCell>
+                     <TableCell className="font-mono">{document.codigo || "-"}</TableCell>
                      <TableCell className="font-medium">{document.document_name}</TableCell>
                      <TableCell>{document.carga_horaria_total ? `${document.carga_horaria_total}h` : "-"}</TableCell>
                      <TableCell>{document.modality || "-"}</TableCell>

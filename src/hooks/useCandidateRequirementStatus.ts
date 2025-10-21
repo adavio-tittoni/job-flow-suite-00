@@ -52,7 +52,7 @@ export interface DepartmentStatus {
 }
 
 export interface ObligationStatus {
-  type: 'mandatory' | 'recommended' | 'client_required';
+  type: 'mandatory' | 'recommended' | 'optional' | 'client_required';
   label: string;
   total: number;
   fulfilled: number;
@@ -129,6 +129,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
   return useQuery({
     queryKey: ['candidate-requirement-status', candidateId],
     queryFn: async () => {
+      console.log('🔄 Refreshing requirement status for candidate:', candidateId);
       // Fetch candidate to get matrix_id
       let candidate: { id: string; matrix_id: string | null } | null = null;
       let candidateError: any = null;
@@ -142,6 +143,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
       candidateError = candidateRes.error;
 
       if (!candidate?.matrix_id) {
+        console.log('❌ No matrix_id found for candidate:', candidateId);
         return {
           overall: { total: 0, fulfilled: 0, partial: 0, pending: 0, adherencePercentage: 0 },
           departments: [],
@@ -150,6 +152,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
           nonRequiredDocuments: []
         };
       }
+
+      console.log('✅ Matrix ID found:', candidate.matrix_id);
 
       // Fetch matrix requirements
       const { data: matrixItems, error: matrixError } = await supabase
@@ -164,7 +168,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             id,
             name,
             group_name,
-            document_category
+            document_category,
+            codigo
           )
         `)
         .eq('matrix_id', candidate.matrix_id);
@@ -192,21 +197,20 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
       const today = new Date();
 
       // Process each matrix requirement
+      console.log('📋 Matrix requirements:', matrixRequirements.map(r => ({ 
+        document: r.document.name, 
+        obrigatoriedade: r.obrigatoriedade 
+      })));
+      
       const requirementStatuses: RequirementStatus[] = matrixRequirements
         .filter(req => {
           if (!req.obrigatoriedade) return true;
           
           const normalized = normalizeString(req.obrigatoriedade);
+          console.log(`🔍 Processing requirement: "${req.document.name}" with obrigatoriedade: "${req.obrigatoriedade}" (normalized: "${normalized}")`);
           
-          // Include all obligation types except optional/desirable
-          const requiredTypes = ['obrigatorio', 'mandatorio', 'requerido', 'requerido cliente', 'recomendado'];
-          const isRequired = requiredTypes.some(type => normalized.includes(type));
-          
-          // Exclude optional/desirable items
-          const excludedTypes = ['opcional', 'desejavel'];
-          const isExcluded = excludedTypes.some(type => normalized.includes(type));
-          
-          return isRequired && !isExcluded;
+          // Include all obligation types - now we want to show all types
+          return true; // Show all obligation types in dashboard
         })
         .map(req => {
           // Try to find matching candidate document
@@ -214,7 +218,19 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             doc.catalog_document_id === req.document_id
           );
 
-          // Fallback: match by normalized name
+          // Fallback 1: match by codigo (custom document code)
+          if (!matchedDoc) {
+            // Get the codigo from the matrix document (from documents_catalog)
+            const matrixDocCodigo = req.document.codigo;
+            if (matrixDocCodigo) {
+              matchedDoc = candidateDocuments?.find(doc => {
+                const docCodigo = doc.codigo;
+                return docCodigo && normalizeString(docCodigo) === normalizeString(matrixDocCodigo);
+              });
+            }
+          }
+
+          // Fallback 2: match by normalized name
           if (!matchedDoc) {
             const reqDocName = normalizeString(req.document.name);
             matchedDoc = candidateDocuments?.find(doc => {
@@ -321,17 +337,36 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
           };
         });
 
-      // Map obligation types
-      const mapObligationType = (obrigatoriedade: string): 'mandatory' | 'recommended' | 'client_required' => {
+      // Map obligation types based on exact dropdown values
+      const mapObligationType = (obrigatoriedade: string): 'mandatory' | 'recommended' | 'optional' | 'client_required' => {
         const normalized = normalizeString(obrigatoriedade);
         
-        if (normalized.includes('recomendado') || normalized.includes('desejavel') || normalized.includes('opcional')) {
+        // Map exact dropdown values
+        if (normalized === 'obrigatorio') {
+          return 'mandatory';
+        }
+        if (normalized === 'recomendado') {
           return 'recommended';
+        }
+        if (normalized === 'opcional') {
+          return 'optional';
+        }
+        if (normalized === 'requerido pelo cliente') {
+          return 'client_required';
+        }
+        
+        // Fallback for legacy values
+        if (normalized.includes('recomendado') || normalized.includes('desejavel')) {
+          return 'recommended';
+        }
+        if (normalized.includes('opcional')) {
+          return 'optional';
         }
         if (normalized.includes('cliente') || normalized.includes('client')) {
           return 'client_required';
         }
-        return 'mandatory'; // Default for 'mandatorio', 'obrigatorio', etc.
+        
+        return 'mandatory'; // Default for 'obrigatorio', etc.
       };
 
       // Calculate department statistics
@@ -376,6 +411,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
         return acc;
       }, {} as Record<string, { total: number; fulfilled: number; partial: number; pending: number }>);
 
+      console.log('📊 Obligation stats:', obligationStats);
+
       const obligations: ObligationStatus[] = [
         {
           type: 'mandatory',
@@ -400,6 +437,17 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             : 0
         },
         {
+          type: 'optional',
+          label: 'Opcional',
+          total: obligationStats.optional?.total || 0,
+          fulfilled: obligationStats.optional?.fulfilled || 0,
+          partial: obligationStats.optional?.partial || 0,
+          pending: obligationStats.optional?.pending || 0,
+          adherencePercentage: obligationStats.optional?.total > 0 
+            ? Math.round((obligationStats.optional.fulfilled / obligationStats.optional.total) * 100) 
+            : 0
+        },
+        {
           type: 'client_required',
           label: 'Requerido pelo Cliente',
           total: obligationStats.client_required?.total || 0,
@@ -411,6 +459,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             : 0
         }
       ];
+
+      console.log('📈 Final obligations:', obligations);
 
       // Calculate overall statistics
       const overall: OverallStatus = {

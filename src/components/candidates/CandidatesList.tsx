@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Edit, Trash2, Eye, ExternalLink, Linkedin } from "lucide-react";
+import { Plus, Edit, Trash2, Eye, ExternalLink, Linkedin, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,13 +9,17 @@ import { Badge } from "@/components/ui/badge";
 import { useCandidates, type Candidate } from "@/hooks/useCandidates";
 import { CandidateForm } from "./CandidateForm";
 import { useNavigate } from "react-router-dom";
+import { useToast } from "@/hooks/use-toast";
+import { updateCandidateDocumentCodes } from "@/utils/updateCandidateDocumentCodes";
 
 export const CandidatesList = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const { candidates, isLoading, deleteCandidate } = useCandidates();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isUpdatingCodes, setIsUpdatingCodes] = useState(false);
 
   const filteredCandidates = candidates.filter((candidate) =>
     candidate.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -72,6 +76,33 @@ export const CandidatesList = () => {
     setSelectedCandidate(null);
   };
 
+  const handleUpdateCodes = async () => {
+    setIsUpdatingCodes(true);
+    try {
+      const result = await updateCandidateDocumentCodes();
+      if (result.success) {
+        toast({
+          title: "Sucesso",
+          description: `${result.updatedCount} documentos atualizados com códigos do catálogo.`,
+        });
+      } else {
+        toast({
+          title: "Erro",
+          description: "Erro ao atualizar códigos dos documentos.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Erro",
+        description: "Erro ao atualizar códigos dos documentos.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdatingCodes(false);
+    }
+  };
+
   if (isLoading) {
     return <div className="flex items-center justify-center h-64">Carregando candidatos...</div>;
   }
@@ -90,13 +121,23 @@ export const CandidatesList = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="max-w-sm"
             />
-            <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={() => setSelectedCandidate(null)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Novo Candidato
-                </Button>
-              </DialogTrigger>
+            <div className="flex gap-2">
+              <Button 
+                onClick={handleUpdateCodes}
+                disabled={isUpdatingCodes}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${isUpdatingCodes ? 'animate-spin' : ''}`} />
+                {isUpdatingCodes ? 'Atualizando...' : 'Atualizar Códigos'}
+              </Button>
+              <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
+                <DialogTrigger asChild>
+                  <Button onClick={() => setSelectedCandidate(null)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Novo Candidato
+                  </Button>
+                </DialogTrigger>
               <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>
@@ -111,6 +152,7 @@ export const CandidatesList = () => {
                 />
               </DialogContent>
             </Dialog>
+            </div>
           </div>
 
           <div className="rounded-md border">

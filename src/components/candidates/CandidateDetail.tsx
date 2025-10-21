@@ -11,7 +11,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { CandidateForm } from "./CandidateForm";
 import { CandidateHistoryTab } from "./CandidateHistoryTab";
 import { CandidateDocumentsTab } from "./CandidateDocumentsTab";
-import CandidateIntegrationsTab from "./CandidateIntegrationsTab";
 import { useCandidates, type Candidate } from "@/hooks/useCandidates";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -26,7 +25,7 @@ export const CandidateDetail = () => {
   const vacancyId = searchParams.get('vacancyId');
   const [currentTab, setCurrentTab] = useState(() => {
     const tab = searchParams.get('tab');
-    return tab === 'dados' || tab === 'history' || tab === 'integrations' ? tab : 'documents';
+    return tab === 'dados' || tab === 'history' ? tab : 'documents';
   });
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -198,7 +197,6 @@ export const CandidateDetail = () => {
           <TabsTrigger value="documents">Documentos</TabsTrigger>
           <TabsTrigger value="dados">Dados</TabsTrigger>
           <TabsTrigger value="history">Histórico</TabsTrigger>
-          <TabsTrigger value="integrations">Integrações</TabsTrigger>
         </TabsList>
 
         <TabsContent value="documents">
@@ -223,10 +221,6 @@ export const CandidateDetail = () => {
 
         <TabsContent value="history">
           <CandidateHistoryTab candidateId={candidate.id} />
-        </TabsContent>
-
-        <TabsContent value="integrations">
-          <CandidateIntegrationsTab candidateId={candidate.id} />
         </TabsContent>
       </Tabs>
     </div>

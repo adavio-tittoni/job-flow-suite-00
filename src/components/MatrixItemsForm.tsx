@@ -2,21 +2,18 @@ import { useState, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Trash2, Check, ChevronsUpDown } from "lucide-react";
+import { Plus, Trash2, Edit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useMatrixItems, useCreateMatrixItem, useUpdateMatrixItem, useDeleteMatrixItem, type MatrixItem } from "@/hooks/useMatrix";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 
 const matrixItemSchema = z.object({
   document_id: z.string().min(1, "Documento é obrigatório"),
@@ -47,12 +44,10 @@ interface MatrixItemsFormProps {
 
 export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormProps) => {
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [searchValue, setSearchValue] = useState("");
-  const [isComboOpen, setIsComboOpen] = useState(false);
-  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingItem, setEditingItem] = useState<MatrixItem | null>(null);
 
   const { data: matrixItems = [], isLoading } = useMatrixItems(matrixId);
   const createMatrixItem = useCreateMatrixItem();
@@ -88,21 +83,7 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
         .order('name');
       
       if (!error && data) {
-        console.log('Documents loaded:', data.length, 'documents');
-        console.log('Sample document:', data[0]);
-        
-        // Check if NR-35 document is loaded
-        const nr35Doc = data.find(doc => (doc as any).codigo === 'NR-35');
-        if (nr35Doc) {
-          console.log('NR-35 document found:', nr35Doc);
-        } else {
-          console.log('NR-35 document NOT found in loaded data');
-          console.log('Available codigos:', data.map(doc => (doc as any).codigo).filter(Boolean));
-        }
-        
         setDocuments(data);
-      } else if (error) {
-        console.error('Error loading documents:', error);
       }
     };
     
@@ -116,107 +97,49 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
     }
   }, [isOpen]);
 
-  // Filter documents based on search
-  const filteredDocuments = documents.filter(doc => {
-    if (!searchValue.trim()) return true;
-    
-    const searchTerm = searchValue.toLowerCase().trim();
-    
-    // Check each field individually for better debugging
-    const nameMatch = doc.name && doc.name.toLowerCase().includes(searchTerm);
-    const categoriaMatch = doc.categoria && doc.categoria.toLowerCase().includes(searchTerm);
-    const siglaMatch = (doc as any).sigla && (doc as any).sigla.toLowerCase().includes(searchTerm);
-    const siglaDocMatch = doc.sigla_documento && doc.sigla_documento.toLowerCase().includes(searchTerm);
-    const codigoMatch = (doc as any).codigo && (doc as any).codigo.toLowerCase().includes(searchTerm);
-    const nomeCursoMatch = (doc as any).nome_curso && (doc as any).nome_curso.toLowerCase().includes(searchTerm);
-    const docTypeMatch = doc.document_type && doc.document_type.toLowerCase().includes(searchTerm);
-    
-    const matches = nameMatch || categoriaMatch || siglaMatch || siglaDocMatch || codigoMatch || nomeCursoMatch || docTypeMatch;
-    
-    // Debug log for "35" search
-    if (searchTerm === '35') {
-      console.log('Searching for "35":', {
-        docName: doc.name,
-        codigo: (doc as any).codigo,
-        sigla: (doc as any).sigla,
-        sigla_documento: doc.sigla_documento,
-        categoria: doc.categoria,
-        nome_curso: (doc as any).nome_curso,
-        document_type: doc.document_type,
-        nameMatch,
-        categoriaMatch,
-        siglaMatch,
-        siglaDocMatch,
-        codigoMatch,
-        nomeCursoMatch,
-        docTypeMatch,
-        matches,
-        searchTerm
-      });
-      
-      // Special log for NR-35 document
-      if ((doc as any).codigo === 'NR-35') {
-        console.log('*** FOUND NR-35 DOCUMENT ***', {
-          doc,
-          codigoMatch,
-          matches,
-          searchTerm
-        });
-      }
-    }
-    
-    return matches;
-  });
-
-  // Debug log for filtered results
-  if (searchValue === '35') {
-    console.log('Filtered documents count:', filteredDocuments.length);
-    console.log('Filtered documents:', filteredDocuments.map(doc => ({
-      name: doc.name,
-      codigo: (doc as any).codigo,
-      sigla: (doc as any).sigla
-    })));
-  }
-
-  const handleDocumentSelect = (doc: Document) => {
-    console.log('handleDocumentSelect called with:', doc);
-    setSelectedDocument(doc);
-    setValue("document_id", doc.id);
-    setIsComboOpen(false);
-    // Show name with sigla and codigo if available
-    const parts = [doc.name || (doc as any).nome_curso];
-    if ((doc as any).sigla) {
-      parts.push(`(${(doc as any).sigla})`);
-    }
-    if (doc.sigla_documento) {
-      parts.push(`(${doc.sigla_documento})`);
-    }
-    if ((doc as any).codigo) {
-      parts.push(`[${(doc as any).codigo}]`);
-    }
-    setSearchValue(parts.join(' '));
-    console.log('Document selected successfully:', parts.join(' '));
-  };
-
   const onSubmit = async (data: MatrixItemFormData) => {
     setIsSubmitting(true);
     try {
-      await createMatrixItem.mutateAsync({
-        matrix_id: matrixId,
-        ...data,
-      });
-      
-      toast({
-        title: "Item adicionado",
-        description: "O item foi adicionado à matriz com sucesso.",
-      });
+      if (editingItem) {
+        // Update existing item
+        await updateMatrixItem.mutateAsync({
+          id: editingItem.id,
+          matrix_id: matrixId,
+          ...data,
+        });
+        
+        toast({
+          title: "Item atualizado",
+          description: "O item foi atualizado na matriz com sucesso.",
+        });
+      } else {
+        // Create new item
+        await createMatrixItem.mutateAsync({
+          matrix_id: matrixId,
+          document_id: data.document_id,
+          obrigatoriedade: data.obrigatoriedade,
+          carga_horaria: data.carga_horaria,
+          modalidade: data.modalidade,
+          regra_validade: data.regra_validade,
+          document: {
+            id: data.document_id,
+            name: documents.find(d => d.id === data.document_id)?.name || "",
+            categoria: documents.find(d => d.id === data.document_id)?.categoria || "",
+          }
+        });
+        
+        toast({
+          title: "Item adicionado",
+          description: "O item foi adicionado à matriz com sucesso.",
+        });
+      }
       
       // Reset form and clear all states
       clearForm();
     } catch (error: any) {
       toast({
         title: "Erro",
-        description: error.message || "Ocorreu um erro ao adicionar o item.",
+        description: error.message || `Ocorreu um erro ao ${editingItem ? 'atualizar' : 'adicionar'} o item.`,
         variant: "destructive",
       });
     } finally {
@@ -227,6 +150,17 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
   const handleDelete = (itemId: string) => {
     setItemToDelete(itemId);
     setDeleteDialogOpen(true);
+  };
+
+  const handleEdit = (item: MatrixItem) => {
+    setEditingItem(item);
+    
+    // Set form values
+    setValue("document_id", item.document_id);
+    setValue("obrigatoriedade", item.obrigatoriedade);
+    setValue("carga_horaria", item.carga_horaria || undefined);
+    setValue("modalidade", item.modalidade);
+    setValue("regra_validade", item.regra_validade);
   };
 
   const confirmDelete = async () => {
@@ -262,9 +196,7 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
       modalidade: "",
       regra_validade: "",
     });
-    setSelectedDocument(null);
-    setSearchValue("");
-    setIsComboOpen(false);
+    setEditingItem(null);
   };
 
   const handleClose = () => {
@@ -295,114 +227,56 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
           <div className="flex flex-col h-full">
             {/* Form to add new item */}
             <div className="border-b pb-4 mb-4">
-              <h3 className="text-lg font-medium mb-4">Adicionar Novo Item</h3>
+              <h3 className="text-lg font-medium mb-4">
+                {editingItem ? "Editar Item" : "Adicionar Novo Item"}
+              </h3>
               
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="document">Documento</Label>
-                    <Popover open={isComboOpen} onOpenChange={(open) => {
-                      console.log('Popover open changed:', open);
-                      setIsComboOpen(open);
-                    }}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          role="combobox"
-                          aria-expanded={isComboOpen}
-                          className="w-full justify-between"
-                        >
-                          {selectedDocument ? (
-                            <div className="flex items-center gap-2">
-                              <span>{selectedDocument.name || selectedDocument.nome_curso}</span>
-                              {selectedDocument.sigla && (
-                                <Badge variant="outline" className="text-xs">
-                                  {selectedDocument.sigla}
-                                </Badge>
-                              )}
-                              {selectedDocument.sigla_documento && (
-                                <Badge variant="outline" className="text-xs">
-                                  {selectedDocument.sigla_documento}
-                                </Badge>
-                              )}
-                              {selectedDocument.codigo && (
-                                <Badge variant="secondary" className="text-xs">
-                                  {selectedDocument.codigo}
-                                </Badge>
-                              )}
-                            </div>
-                          ) : (
-                            "Selecionar documento..."
-                          )}
-                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-full p-0">
-                        <Command>
-                          <CommandInput
-                            placeholder="Buscar por nome, categoria, sigla ou código..."
-                            value={searchValue}
-                            onValueChange={setSearchValue}
-                          />
-                          <CommandList>
-                            {filteredDocuments.length === 0 ? (
-                              <CommandEmpty>Nenhum documento encontrado.</CommandEmpty>
-                            ) : (
-                              <CommandGroup>
-                                <ScrollArea className="h-48">
-                                  {(() => {
-                                    if (searchValue === '35') {
-                                      console.log('Rendering documents:', filteredDocuments.length, 'documents');
-                                    }
-                                    return null;
-                                  })()}
-                                  {filteredDocuments.map((doc) => (
-                                  <CommandItem
-                                    key={doc.id}
-                                    value={`${doc.name} ${(doc as any).codigo || ''} ${(doc as any).sigla || ''}`.trim()}
-                                    onSelect={() => {
-                                      console.log('Selecting document:', doc);
-                                      handleDocumentSelect(doc);
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-4 w-4",
-                                        selectedDocument?.id === doc.id ? "opacity-100" : "opacity-0"
+                    <Controller
+                      name="document_id"
+                      control={control}
+                      render={({ field }) => (
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecionar documento..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <ScrollArea className="h-48">
+                              {documents.map((doc) => (
+                                <SelectItem key={doc.id} value={doc.id}>
+                                  <div className="flex flex-col">
+                                    <div className="flex items-center gap-2">
+                                      <span>{doc.name || doc.nome_curso}</span>
+                                      {doc.sigla && (
+                                        <Badge variant="outline" className="text-xs">
+                                          {doc.sigla}
+                                        </Badge>
                                       )}
-                                    />
-                                    <div className="flex flex-col">
-                                      <div className="flex items-center gap-2">
-                                        <span>{doc.name || doc.nome_curso}</span>
-                                        {doc.sigla && (
-                                          <Badge variant="outline" className="text-xs">
-                                            {doc.sigla}
-                                          </Badge>
-                                        )}
-                                        {doc.sigla_documento && (
-                                          <Badge variant="outline" className="text-xs">
-                                            {doc.sigla_documento}
-                                          </Badge>
-                                        )}
-                                        {doc.codigo && (
-                                          <Badge variant="secondary" className="text-xs">
-                                            {doc.codigo}
-                                          </Badge>
-                                        )}
-                                      </div>
-                                      <span className="text-sm text-muted-foreground">
-                                        {doc.categoria}
-                                      </span>
+                                      {doc.sigla_documento && (
+                                        <Badge variant="outline" className="text-xs">
+                                          {doc.sigla_documento}
+                                        </Badge>
+                                      )}
+                                      {doc.codigo && (
+                                        <Badge variant="secondary" className="text-xs">
+                                          {doc.codigo}
+                                        </Badge>
+                                      )}
                                     </div>
-                                  </CommandItem>
-                                  ))}
-                                </ScrollArea>
-                              </CommandGroup>
-                            )}
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
+                                    <span className="text-sm text-muted-foreground">
+                                      {doc.categoria}
+                                    </span>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </ScrollArea>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
                     {errors.document_id && (
                       <p className="text-sm text-destructive">{errors.document_id.message}</p>
                     )}
@@ -497,10 +371,23 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
                   </div>
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex justify-end gap-2">
+                  {editingItem && (
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      onClick={clearForm}
+                      disabled={isSubmitting}
+                    >
+                      Cancelar Edição
+                    </Button>
+                  )}
                   <Button type="submit" disabled={isSubmitting}>
                     <Plus className="h-4 w-4 mr-2" />
-                    {isSubmitting ? "Adicionando..." : "Adicionar Item"}
+                    {isSubmitting 
+                      ? (editingItem ? "Atualizando..." : "Adicionando...") 
+                      : (editingItem ? "Atualizar Item" : "Adicionar Item")
+                    }
                   </Button>
                 </div>
               </form>
@@ -527,14 +414,24 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
                           Modalidade: {item.modalidade} • Validade: {item.regra_validade}
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(item.id)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEdit(item)}
+                          className="text-blue-600 hover:text-blue-700"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(item.id)}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                   

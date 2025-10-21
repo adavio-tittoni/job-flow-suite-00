@@ -5,9 +5,11 @@ import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertCircle, CheckCircle, XCircle, TrendingUp, Users, Target } from "lucide-react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { AlertCircle, CheckCircle, XCircle, TrendingUp, Users, Target, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCandidateRequirementStatus } from "@/hooks/useCandidateRequirementStatus";
+import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
 
 interface Candidate {
   id: string;
@@ -170,16 +172,7 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
         </TabsContent>
 
         <TabsContent value="detailed" className="space-y-4">
-          {candidates.map((candidate) => (
-            <CandidateDetailedCard 
-              key={candidate.id} 
-              candidate={candidate} 
-              matrixItems={matrixItems}
-              getInitials={getInitials}
-              getProgressVariant={getProgressVariant}
-              getCompatibilityLevel={getCompatibilityLevel}
-            />
-          ))}
+          <DetailedComparisonTable vacancyId={vacancyId} matrixId={matrixId} />
         </TabsContent>
       </Tabs>
     </div>
@@ -269,98 +262,217 @@ interface CandidateDetailedCardProps {
   getCompatibilityLevel: (percentage: number) => { level: string; color: string; icon: any };
 }
 
-const CandidateDetailedCard = ({ candidate, matrixItems, getInitials, getProgressVariant, getCompatibilityLevel }: CandidateDetailedCardProps) => {
-  const { data: adherenceData, isLoading } = useCandidateRequirementStatus(candidate.id);
-  
-  if (isLoading) {
+interface DetailedComparisonTableProps {
+  vacancyId: string;
+  matrixId: string | null;
+}
+
+const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTableProps) => {
+  const { comparisons, loading, error } = useVacancyCandidateComparison(vacancyId);
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'Confere':
+        return <CheckCircle className="h-4 w-4 text-green-600" />;
+      case 'Parcial':
+        return <Clock className="h-4 w-4 text-yellow-600" />;
+      case 'Pendente':
+        return <XCircle className="h-4 w-4 text-red-600" />;
+      default:
+        return <AlertCircle className="h-4 w-4 text-gray-600" />;
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'Confere':
+        return <Badge className="bg-green-100 text-green-800">Confere</Badge>;
+      case 'Parcial':
+        return <Badge className="bg-yellow-100 text-yellow-800">Parcial</Badge>;
+      case 'Pendente':
+        return <Badge className="bg-red-100 text-red-800">Pendente</Badge>;
+      case 'N/A - Matriz':
+        return <Badge variant="outline">N/A - Matriz</Badge>;
+      default:
+        return <Badge variant="outline">N/A</Badge>;
+    }
+  };
+
+  const getValidityBadge = (validity: string) => {
+    switch (validity) {
+      case 'Valido':
+        return <Badge className="bg-green-100 text-green-800">Válido</Badge>;
+      case 'Vencido':
+        return <Badge className="bg-red-100 text-red-800">Vencido</Badge>;
+      default:
+        return <Badge variant="outline">N/A</Badge>;
+    }
+  };
+
+  if (loading) {
     return (
       <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-            <span className="text-sm text-muted-foreground">Calculando...</span>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <span className="ml-2">Carregando comparação detalhada...</span>
           </div>
         </CardContent>
       </Card>
     );
   }
 
-  const compatibility = getCompatibilityLevel(adherenceData?.overall.adherencePercentage || 0);
-  const IconComponent = compatibility.icon;
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            <span>Erro ao carregar comparação: {error}</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (comparisons.length === 0) {
+    return (
+      <Card>
+        <CardContent className="pt-6">
+          <div className="text-center py-8">
+            <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+            <p className="text-muted-foreground">Nenhum candidato encontrado para esta vaga</p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <Avatar className="h-12 w-12">
-            <AvatarImage src={candidate.photo_url} />
-            <AvatarFallback>
-              {getInitials(candidate.name)}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1">
-            <CardTitle className="text-lg">{candidate.name}</CardTitle>
-            {candidate.role_title && (
-              <p className="text-sm text-muted-foreground">{candidate.role_title}</p>
-            )}
-          </div>
-          <Badge className={compatibility.color}>
-            <IconComponent className="h-3 w-3 mr-1" />
-            {compatibility.level}
-          </Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          <div>
-            <div className="flex justify-between text-sm mb-2">
-              <span className="font-medium">Aderência Geral</span>
-              <span className="font-bold">{adherenceData?.overall.adherencePercentage || 0}%</span>
+    <div className="space-y-4">
+      {comparisons.map((comparison) => (
+        <Card key={comparison.candidateId}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg">{comparison.candidateName}</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {comparison.matrixName}
+                </p>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold">{comparison.adherencePercentage}%</div>
+                <div className="text-sm text-muted-foreground">Aderência</div>
+              </div>
             </div>
-            <Progress 
-              value={adherenceData?.overall.adherencePercentage || 0} 
-              variant={getProgressVariant(adherenceData?.overall.adherencePercentage || 0)}
-              className="h-3"
-            />
-            <div className="text-xs text-muted-foreground mt-1">
-              {adherenceData?.overall.fulfilled || 0} de {adherenceData?.overall.total || 0} requisitos atendidos
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <div className="text-center">
+                <div className="text-xl font-bold text-green-600">{comparison.metRequirements}</div>
+                <div className="text-sm text-muted-foreground">Confere</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xl font-bold text-yellow-600">{comparison.partialRequirements}</div>
+                <div className="text-sm text-muted-foreground">Parcial</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xl font-bold text-red-600">{comparison.pendingRequirements}</div>
+                <div className="text-sm text-muted-foreground">Pendente</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xl font-bold">{comparison.totalRequirements}</div>
+                <div className="text-sm text-muted-foreground">Total</div>
+              </div>
             </div>
-          </div>
-
-          {adherenceData?.obligations && adherenceData.obligations.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="font-medium text-sm">Detalhamento por Categoria</h4>
-              {adherenceData.obligations
-                .filter(obligation => obligation.total > 0)
-                .map((obligation) => (
-                  <div key={`${obligation.type}-${obligation.label}`} className="space-y-2">
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="font-medium">{obligation.label}</span>
-                      <span className="text-muted-foreground">{obligation.adherencePercentage}%</span>
-                    </div>
-                    <Progress 
-                      value={obligation.adherencePercentage} 
-                      variant={getProgressVariant(obligation.adherencePercentage)}
-                      className="h-2"
-                    />
-                    <div className="text-xs text-muted-foreground">
-                      {obligation.fulfilled} de {obligation.total} requisitos
-                    </div>
-                  </div>
-                ))
-              }
+            <Progress value={comparison.adherencePercentage} className="h-2 mb-4" />
+            
+            {/* Tabela detalhada */}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Validade</TableHead>
+                    <TableHead>Documento</TableHead>
+                    <TableHead>Código</TableHead>
+                    <TableHead>Obrigatoriedade</TableHead>
+                    <TableHead>Horas</TableHead>
+                    <TableHead>Modalidade</TableHead>
+                    <TableHead>Observações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {comparison.documents.map((doc) => (
+                    <TableRow key={doc.requirementId}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(doc.status)}
+                          {getStatusBadge(doc.status)}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {getValidityBadge(doc.validityStatus)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          <div className="font-medium">{doc.documentName}</div>
+                          {doc.candidateDocument && (
+                            <div className="text-muted-foreground text-xs">
+                              Candidato: {doc.candidateDocument.name}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm font-mono">
+                          {doc.documentCode || '-'}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">
+                          {doc.obligation || 'N/A'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          {doc.requiredHours > 0 ? `${doc.requiredHours}h` : '-'}
+                          {doc.candidateDocument && doc.candidateDocument.hours > 0 && (
+                            <div className="text-muted-foreground text-xs">
+                              Candidato: {doc.candidateDocument.hours}h
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm">
+                          {doc.modality || '-'}
+                          {doc.candidateDocument && doc.candidateDocument.modality && (
+                            <div className="text-muted-foreground text-xs">
+                              Candidato: {doc.candidateDocument.modality}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm text-muted-foreground max-w-xs">
+                          {doc.observations}
+                          {doc.similarityScore && doc.similarityScore < 1 && (
+                            <div className="text-xs mt-1">
+                              Similaridade IA: {Math.round(doc.similarityScore * 100)}%
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-          )}
-
-          {candidate.notes && (
-            <div>
-              <h4 className="font-medium text-sm mb-2">Observações</h4>
-              <p className="text-sm text-muted-foreground">{candidate.notes}</p>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
   );
 };
 

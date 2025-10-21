@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCandidates, type Candidate } from "@/hooks/useCandidates";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 const candidateSchema = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
@@ -19,6 +21,7 @@ const candidateSchema = z.object({
   role_title: z.string().optional(),
   linkedin_url: z.string().optional(),
   working_status: z.string().optional(),
+  matrix_id: z.string().optional().or(z.undefined()),
   blacklisted: z.boolean().default(false),
   address_street: z.string().optional(),
   address_number: z.string().optional(),
@@ -42,7 +45,22 @@ interface CandidateFormProps {
 export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false }: CandidateFormProps) => {
   const { createCandidate, updateCandidate } = useCandidates();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Fetch vacancies for selection
+  const { data: vacancies = [] } = useQuery({
+    queryKey: ["vacancies"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vacancies")
+        .select("id, title, matrix_id")
+        .order("title", { ascending: true });
+
+      if (error) throw error;
+      return data;
+    },
+  });
 
   const {
     register,
@@ -60,6 +78,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
       role_title: candidate?.role_title || "",
       linkedin_url: candidate?.linkedin_url || "",
       working_status: candidate?.working_status || "",
+      matrix_id: candidate?.matrix_id || undefined,
       blacklisted: candidate?.blacklisted || false,
       address_street: candidate?.address_street || "",
       address_number: candidate?.address_number || "",
@@ -83,19 +102,35 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
   const onSubmit = async (data: CandidateFormData) => {
     setIsSubmitting(true);
     try {
+      console.log('📝 CandidateForm: Submitting data:', data);
+      
       const normalizedData = {
         ...data,
         linkedin_url: data.linkedin_url ? normalizeLinkedInUrl(data.linkedin_url) : "",
-        email: data.email || null,
+        email: data.email || "", // Keep as empty string instead of null
+        matrix_id: data.matrix_id || null,
       };
+      
+      console.log('📝 CandidateForm: Normalized data:', normalizedData);
 
       if (candidate) {
+        console.log('📝 CandidateForm: Updating candidate:', candidate.id);
         await updateCandidate.mutateAsync({ id: candidate.id, ...normalizedData });
+        
+        // Invalidate queries related to matrix comparison
+        queryClient.invalidateQueries({ queryKey: ["candidate", candidate.id] });
+        queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidate.id] });
+        queryClient.invalidateQueries({ queryKey: ["candidate-documents", candidate.id] });
+        queryClient.invalidateQueries({ queryKey: ["advanced-matrix-comparison", candidate.id] });
+        queryClient.invalidateQueries({ queryKey: ["enhanced-matrix-comparison", candidate.id] });
+        queryClient.invalidateQueries({ queryKey: ["vacancy-candidate-comparison"] });
       } else {
+        console.log('📝 CandidateForm: Creating new candidate');
         await createCandidate.mutateAsync(normalizedData);
       }
       onSuccess();
     } catch (error) {
+      console.error('📝 CandidateForm: Error submitting:', error);
       toast({
         title: "Erro",
         description: "Não foi possível salvar o candidato.",
@@ -182,6 +217,44 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
               <SelectItem value="Trabalhando">Trabalhando</SelectItem>
               <SelectItem value="Disponível">Disponível</SelectItem>
               <SelectItem value="Não disponível">Não disponível</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="matrix_id">Vaga a ser concorrida</Label>
+          <Select 
+            value={(() => {
+              // Find the vacancy that has the same matrix_id as the candidate
+              const currentVacancy = vacancies.find(v => v.matrix_id === candidate?.matrix_id);
+              console.log('📝 CandidateForm: Current candidate matrix_id:', candidate?.matrix_id);
+              console.log('📝 CandidateForm: Available vacancies:', vacancies);
+              console.log('📝 CandidateForm: Found vacancy:', currentVacancy);
+              return currentVacancy?.id || undefined;
+            })()} 
+            onValueChange={(value) => {
+              console.log('📝 CandidateForm: Vacancy selected:', value);
+              // Find the vacancy and get its matrix_id
+              const selectedVacancy = vacancies.find(v => v.id === value);
+              console.log('📝 CandidateForm: Selected vacancy:', selectedVacancy);
+              if (selectedVacancy) {
+                console.log('📝 CandidateForm: Setting matrix_id to:', selectedVacancy.matrix_id);
+                setValue("matrix_id", selectedVacancy.matrix_id || undefined);
+              } else {
+                console.log('📝 CandidateForm: No vacancy found, setting matrix_id to undefined');
+                setValue("matrix_id", undefined);
+              }
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Selecione uma vaga..." />
+            </SelectTrigger>
+            <SelectContent>
+              {vacancies.map((vacancy) => (
+                <SelectItem key={vacancy.id} value={vacancy.id}>
+                  {vacancy.title}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

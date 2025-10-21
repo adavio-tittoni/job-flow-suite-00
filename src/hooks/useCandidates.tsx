@@ -40,6 +40,7 @@ export interface CandidateDocument {
   document_name: string;
   document_type?: string;
   document_category?: string; // From documents_catalog
+  sigla_documento?: string; // From documents_catalog
   modality?: string;
   registration_number?: string;
   issue_date?: string;
@@ -54,6 +55,7 @@ export interface CandidateDocument {
   detail?: string;
   arquivo_original?: string;
   sigla_documento?: string;
+  codigo?: string; // Custom document code for matrix comparison
 }
 
 export interface CandidateHistory {
@@ -178,7 +180,7 @@ export const useCandidateDocuments = (candidateId: string) => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
-  const { data: documents = [], isLoading } = useQuery({
+  const { data: documents = [], isLoading, refetch } = useQuery({
     queryKey: ["candidate-documents", candidateId],
     queryFn: async () => {
       console.log('Fetching documents for candidate:', candidateId);
@@ -186,9 +188,11 @@ export const useCandidateDocuments = (candidateId: string) => {
         .from("candidate_documents")
         .select(`
           *,
-          documents_catalog!candidate_documents_catalog_document_id_fkey(
+          documents_catalog!left(
             document_category,
+            categoria,
             group_name,
+            sigla_documento,
             name
           )
         `)
@@ -197,12 +201,16 @@ export const useCandidateDocuments = (candidateId: string) => {
 
       if (error) throw error;
       
-      // Transform the data to flatten the document_category from catalog
-      const transformedData = data?.map(doc => ({
-        ...doc,
-        document_category: doc.documents_catalog?.document_category || null,
-        documents_catalog: undefined // Remove the nested object
-      })) || [];
+      // Transform the data to flatten the categoria and sigla_documento from catalog
+      const transformedData = data?.map(doc => {
+        console.log('Processing document:', doc.document_name, 'catalog:', doc.documents_catalog);
+        return {
+          ...doc,
+          document_category: doc.documents_catalog?.categoria || null,
+          sigla_documento: doc.documents_catalog?.sigla_documento || null,
+          documents_catalog: undefined // Remove the nested object
+        };
+      }) || [];
       
       console.log('Documents fetched:', transformedData.length);
       return transformedData as CandidateDocument[];
@@ -276,6 +284,28 @@ export const useCandidateDocuments = (candidateId: string) => {
 
   const deleteDocument = useMutation({
     mutationFn: async (id: string) => {
+      // Primeiro, buscar o documento para obter o file_url
+      const { data: document, error: fetchError } = await supabase
+        .from("candidate_documents")
+        .select("file_url")
+        .eq("id", id)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // Deletar o arquivo do storage se existir
+      if (document?.file_url) {
+        const { error: storageError } = await supabase.storage
+          .from('candidate-documents')
+          .remove([document.file_url]);
+
+        if (storageError) {
+          console.warn('Erro ao deletar arquivo do storage:', storageError);
+          // Não falhar a operação se o arquivo não existir no storage
+        }
+      }
+
+      // Deletar o registro do banco de dados
       const { error } = await supabase
         .from("candidate_documents")
         .delete()
@@ -302,6 +332,7 @@ export const useCandidateDocuments = (candidateId: string) => {
   return {
     documents,
     isLoading,
+    refetch,
     createDocument,
     updateDocument,
     deleteDocument,
