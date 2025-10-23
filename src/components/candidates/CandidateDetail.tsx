@@ -53,7 +53,7 @@ export const CandidateDetail = () => {
       if (error) throw error;
       if (!data) throw new Error("Candidato não encontrado");
       
-      return data as Candidate;
+      return data as unknown as Candidate;
     },
     enabled: !!id,
   });
@@ -138,66 +138,98 @@ export const CandidateDetail = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={() => {
-            if (from === 'vacancy' && vacancyId) {
-              navigate(`/vacancies/${vacancyId}`);
-            } else {
-              navigate("/candidates");
-            }
-          }}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Voltar
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              {candidate.name}
-              {candidate.blacklisted && (
-                <Badge variant="destructive">Blacklist</Badge>
-              )}
-            </h1>
-            <p className="text-muted-foreground">
-              {candidate.role_title && `${candidate.role_title} • `}
-              {candidate.email || "Email não informado"}
-            </p>
+      {/* Enhanced Header */}
+      <div className="bg-gradient-to-r from-slate-50 to-blue-50 border border-slate-200 rounded-lg p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" onClick={() => {
+              if (from === 'vacancy' && vacancyId) {
+                navigate(`/vacancies/${vacancyId}`);
+              } else {
+                navigate("/candidates");
+              }
+            }} className="hover:bg-white/50">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Voltar
+            </Button>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <span className="text-blue-600 font-bold text-lg">👤</span>
+                </div>
+                <div>
+                  <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+                    {candidate.name}
+                    {candidate.blacklisted && (
+                      <Badge variant="destructive" className="text-xs">Blacklist</Badge>
+                    )}
+                  </h1>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800 border-blue-200">
+                      {candidate.role_title || 'Candidato'}
+                    </Badge>
+                    <span className="text-slate-600 text-sm">
+                      {candidate.email || "Email não informado"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {currentTab === "dados" && (
+              <Button type="submit" form="candidate-data-form" className="ml-8 bg-blue-600 hover:bg-blue-700">
+                Salvar alterações
+              </Button>
+            )}
           </div>
           
-          {currentTab === "dados" && (
-            <Button type="submit" form="candidate-data-form" className="ml-8">
-              Salvar alterações
-            </Button>
-          )}
-        </div>
-        
-        {/* Avatar with upload */}
-        <div className="relative">
-          <Avatar className="h-24 w-24 cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-            <AvatarImage src={candidate.photo_url} />
-            <AvatarFallback>{getInitials(candidate.name)}</AvatarFallback>
-          </Avatar>
-          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-full opacity-0 hover:opacity-100 transition-opacity cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-            <Camera className="h-6 w-6 text-white" />
+          {/* Enhanced Avatar with upload */}
+          <div className="relative">
+            <Avatar className="h-28 w-28 cursor-pointer border-4 border-white shadow-lg" onClick={() => fileInputRef.current?.click()}>
+              <AvatarImage src={candidate.photo_url} />
+              <AvatarFallback className="text-2xl font-bold bg-blue-100 text-blue-600">
+                {getInitials(candidate.name)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-full opacity-0 hover:opacity-100 transition-opacity cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+              <Camera className="h-8 w-8 text-white" />
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handlePhotoUpload}
+              className="hidden"
+              disabled={isUploading}
+            />
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handlePhotoUpload}
-            className="hidden"
-            disabled={isUploading}
-          />
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Enhanced Tabs */}
       <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="documents">Documentos</TabsTrigger>
-          <TabsTrigger value="dados">Dados</TabsTrigger>
-          <TabsTrigger value="history">Histórico</TabsTrigger>
-        </TabsList>
+        <div className="bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
+          <TabsList className="grid w-full grid-cols-3 bg-gray-100">
+            <TabsTrigger 
+              value="documents"
+              className="data-[state=active]:bg-blue-500 data-[state=active]:text-white font-semibold"
+            >
+              📋 Documentos
+            </TabsTrigger>
+            <TabsTrigger 
+              value="dados"
+              className="data-[state=active]:bg-green-500 data-[state=active]:text-white font-semibold"
+            >
+              👤 Dados
+            </TabsTrigger>
+            <TabsTrigger 
+              value="history"
+              className="data-[state=active]:bg-purple-500 data-[state=active]:text-white font-semibold"
+            >
+              📊 Histórico
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="documents">
           <CandidateDocumentsTab candidateId={candidate.id} candidateName={candidate.name} />
@@ -214,8 +246,6 @@ export const CandidateDetail = () => {
               });
             }}
             onCancel={() => {}}
-            formId="candidate-data-form"
-            showActions={false}
           />
         </TabsContent>
 

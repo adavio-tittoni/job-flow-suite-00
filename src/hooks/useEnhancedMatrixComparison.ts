@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { compareDocumentWithMatrix, MatrixDocument, CandidateDocument } from '@/utils/documentComparison';
 
 interface DocumentCatalogData {
   id: string;
@@ -41,16 +42,6 @@ interface MatrixComparisonResult {
   documents: CandidateDocumentWithCatalog[];
 }
 
-// Função para normalizar strings para comparação
-const normalizeString = (str: string): string => {
-  return str
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Remove acentos
-    .replace(/[^\w\s]/g, '') // Remove pontuação
-    .replace(/\s+/g, ' ') // Normaliza espaços
-    .trim();
-};
 
 export const useEnhancedMatrixComparison = (candidateId: string, matrixId: string | null) => {
   const [result, setResult] = useState<MatrixComparisonResult | null>(null);
@@ -109,10 +100,33 @@ export const useEnhancedMatrixComparison = (candidateId: string, matrixId: strin
 
       if (matrixItemsError) throw matrixItemsError;
 
-      // 3. Buscar documentos do candidato
+      // 3. Buscar documentos do candidato com todos os campos necessários
       const { data: candidateDocs, error: candidateDocsError } = await supabase
         .from('candidate_documents')
-        .select('*')
+        .select(`
+          id,
+          candidate_id,
+          document_name,
+          group_name,
+          catalog_document_id,
+          codigo,
+          sigla_documento,
+          expiry_date,
+          carga_horaria_total,
+          modality,
+          issue_date,
+          detail,
+          document_category,
+          document_type,
+          issuing_authority,
+          registration_number,
+          carga_horaria_teorica,
+          carga_horaria_pratica,
+          link_validacao,
+          file_url,
+          arquivo_original,
+          tipo_de_codigo
+        `)
         .eq('candidate_id', candidateId);
 
       if (candidateDocsError) throw candidateDocsError;
@@ -126,85 +140,38 @@ export const useEnhancedMatrixComparison = (candidateId: string, matrixId: strin
       for (const matrixItem of matrixItems || []) {
         const catalogDoc = matrixItem.documents_catalog;
         
-        // Tentar encontrar documento correspondente do candidato
-        let matchedDoc = null;
-        let matchType: 'exact_id' | 'exact_code' | 'semantic_name' | 'none' = 'none';
-        let similarityScore = 0;
+        // Preparar dados da matriz com modalidade e carga horária
+        const matrixDocWithDetails: MatrixDocument = {
+          ...catalogDoc,
+          modality: matrixItem.modalidade,
+          carga_horaria: matrixItem.carga_horaria
+        };
 
-        // 1. Comparação exata por catalog_document_id
-        matchedDoc = candidateDocs?.find(doc => 
-          doc.catalog_document_id === catalogDoc.id
-        );
-        if (matchedDoc) {
-          matchType = 'exact_id';
-          similarityScore = 1.0;
-        }
+        // Usar a função centralizada de comparação
+        const comparisonResult = compareDocumentWithMatrix(matrixDocWithDetails, candidateDocs || []);
+        const matchedDoc = comparisonResult.matchedDocument;
+        const matchType = comparisonResult.matchType;
+        const similarityScore = comparisonResult.similarityScore;
+        const observations = comparisonResult.observations;
 
-        // 2. Comparação por código
-        if (!matchedDoc && catalogDoc.codigo) {
-          matchedDoc = candidateDocs?.find(doc => {
-            const docCodigo = doc.codigo;
-            return docCodigo && 
-              docCodigo.toLowerCase().trim() === catalogDoc.codigo.toLowerCase().trim();
-          });
-          if (matchedDoc) {
-            matchType = 'exact_code';
-            similarityScore = 0.95;
-          }
-        }
-
-        // 3. Comparação rápida por nome (sem IA)
-        if (!matchedDoc) {
-          // Buscar match por nome normalizado (comparação rápida)
-          const reqDocName = normalizeString(catalogDoc.name);
-          matchedDoc = candidateDocs?.find(doc => {
-            const docName = normalizeString(doc.document_name);
-            return docName === reqDocName;
-          });
-          
-          if (matchedDoc) {
-            matchType = 'semantic_name';
-            similarityScore = 0.8; // Similaridade alta para match exato por nome
-          }
-        }
-
-        // Determinar status do documento
+        // Mapear status para o formato esperado pelo hook
         let status: 'approved' | 'pending' | 'partial' | 'missing' = 'missing';
-        let observation = 'Documento ausente';
-
-        if (matchedDoc) {
-          // Verificar validade
-          const expiryDate = matchedDoc.expiry_date ? new Date(matchedDoc.expiry_date) : null;
-          const today = new Date();
-
-          if (expiryDate && expiryDate < today) {
+        switch (comparisonResult.status) {
+          case 'Confere':
+            status = 'approved';
+            approvedCount++;
+            break;
+          case 'Parcial':
+            status = 'partial';
+            partialCount++;
+            break;
+          case 'Pendente':
             status = 'pending';
-            observation = 'Documento vencido';
-          } else {
-            // Verificar carga horária se necessário
-            if (matrixItem.carga_horaria && matrixItem.carga_horaria > 0) {
-              const actualHours = matchedDoc.carga_horaria_total || 0;
-              if (actualHours >= matrixItem.carga_horaria) {
-                status = 'approved';
-                observation = 'Requisito atendido';
-                approvedCount++;
-              } else if (actualHours > 0) {
-                status = 'partial';
-                observation = `Horas insuficientes (${actualHours}/${matrixItem.carga_horaria}h)`;
-                partialCount++;
-              } else {
-                status = 'pending';
-                observation = 'Horas não informadas';
-                pendingCount++;
-              }
-            } else {
-              status = 'approved';
-              observation = 'Requisito atendido';
-              approvedCount++;
-            }
-          }
-        } else {
-          pendingCount++;
+            pendingCount++;
+            break;
+          default:
+            status = 'missing';
+            pendingCount++;
         }
 
         // Criar objeto com todos os dados do catálogo + informações do candidato
@@ -214,7 +181,7 @@ export const useEnhancedMatrixComparison = (candidateId: string, matrixId: strin
           candidate_document_name: matchedDoc?.document_name,
           candidate_codigo: matchedDoc?.codigo,
           status,
-          observation,
+          observation: observations,
           similarity_score: similarityScore,
           match_type: matchType
         };

@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { compareDocumentWithMatrix, calculateAdherenceStats, normalizeString } from "@/utils/documentComparison";
 
 interface MatrixRequirement {
   id: string;
@@ -75,14 +76,6 @@ export interface NonRequiredDocument {
   group_name: string | null;
 }
 
-// Utility function to normalize strings for comparison
-const normalizeString = (str: string): string => {
-  return str
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, ''); // Remove accents
-};
 
 // Utility function to safely parse dates
 const parseDate = (dateString: string | null | undefined): Date | null => {
@@ -129,6 +122,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
   return useQuery({
     queryKey: ['candidate-requirement-status', candidateId],
     queryFn: async () => {
+      console.log('🔄 useCandidateRequirementStatus: Starting fresh calculation for candidate:', candidateId);
       console.log('🔄 Refreshing requirement status for candidate:', candidateId);
       // Fetch candidate to get matrix_id
       let candidate: { id: string; matrix_id: string | null } | null = null;
@@ -169,7 +163,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             name,
             group_name,
             document_category,
-            codigo
+            codigo,
+            sigla_documento
           )
         `)
         .eq('matrix_id', candidate.matrix_id);
@@ -202,43 +197,42 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
         obrigatoriedade: r.obrigatoriedade 
       })));
       
-      const requirementStatuses: RequirementStatus[] = matrixRequirements
-        .filter(req => {
-          if (!req.obrigatoriedade) return true;
-          
-          const normalized = normalizeString(req.obrigatoriedade);
-          console.log(`🔍 Processing requirement: "${req.document.name}" with obrigatoriedade: "${req.obrigatoriedade}" (normalized: "${normalized}")`);
-          
-          // Include all obligation types - now we want to show all types
-          return true; // Show all obligation types in dashboard
-        })
-        .map(req => {
-          // Try to find matching candidate document
-          let matchedDoc = candidateDocuments?.find(doc => 
-            doc.catalog_document_id === req.document_id
-          );
+      const filteredRequirements = matrixRequirements.filter(req => {
+        if (!req.obrigatoriedade) return true;
+        
+        const normalized = normalizeString(req.obrigatoriedade);
+        console.log(`🔍 Processing requirement: "${req.document.name}" with obrigatoriedade: "${req.obrigatoriedade}" (normalized: "${normalized}")`);
+        
+        // Include all obligation types - now we want to show all types
+        return true; // Show all obligation types in dashboard
+      });
 
-          // Fallback 1: match by codigo (custom document code)
-          if (!matchedDoc) {
-            // Get the codigo from the matrix document (from documents_catalog)
-            const matrixDocCodigo = req.document.codigo;
-            if (matrixDocCodigo) {
-              matchedDoc = candidateDocuments?.find(doc => {
-                const docCodigo = doc.codigo;
-                return docCodigo && normalizeString(docCodigo) === normalizeString(matrixDocCodigo);
-              });
-            }
+      const requirementStatuses: RequirementStatus[] = filteredRequirements.map(req => {
+          // Preparar dados da matriz com modalidade e carga horária
+          const matrixDocWithDetails = {
+            ...req.document,
+            modality: req.modalidade,
+            carga_horaria: req.carga_horaria
+          };
+
+          // Usar a função centralizada de comparação para garantir consistência
+          const comparisonResult = compareDocumentWithMatrix(matrixDocWithDetails, candidateDocuments || []);
+          const matchedDoc = comparisonResult.matchedDocument;
+
+          // Determinar status baseado no resultado da comparação centralizada
+          let status: 'fulfilled' | 'partial' | 'pending';
+          let observation = comparisonResult.observations;
+
+          // Converter status da comparação centralizada para o formato do hook
+          if (comparisonResult.status === 'Confere') {
+            status = 'fulfilled';
+          } else if (comparisonResult.status === 'Parcial') {
+            status = 'partial';
+          } else {
+            status = 'pending';
           }
 
-          // Fallback 2: match by normalized name
-          if (!matchedDoc) {
-            const reqDocName = normalizeString(req.document.name);
-            matchedDoc = candidateDocuments?.find(doc => {
-              const docName = normalizeString(doc.document_name);
-              return docName === reqDocName;
-            });
-          }
-
+          // Se não encontrou documento, retornar status pendente
           if (!matchedDoc) {
             return {
               requirementId: req.id,
@@ -248,8 +242,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
               requiredHours: req.carga_horaria,
               actualHours: null,
               status: 'pending' as const,
-              observation: 'Documento ausente',
-              validityStatus: 'missing' as const,
+              observation: comparisonResult.observations,
+              validityStatus: comparisonResult.validityStatus,
               existingCandidateDocument: undefined,
               documentCategory: req.document.document_category || undefined,
               modality: req.modalidade || undefined,
@@ -257,69 +251,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             };
           }
 
-          // Check validity - if no expiry_date, consider it N/A (not applicable)
-          const expiryDate = parseDate(matchedDoc.expiry_date);
-          let validityStatus: 'valid' | 'expired' | 'not_applicable' = 'not_applicable';
-          let isValidityOk = true;
-          
-          if (expiryDate) {
-            if (expiryDate < today) {
-              validityStatus = 'expired';
-              isValidityOk = false;
-            } else {
-              validityStatus = 'valid';
-            }
-          }
-          
-          // If document is expired, mark as pending
-          if (!isValidityOk) {
-            return {
-              requirementId: req.id,
-              documentId: req.document_id,
-              documentName: req.document.name,
-              groupName: req.document.group_name,
-              requiredHours: req.carga_horaria,
-              actualHours: matchedDoc.carga_horaria_total,
-              status: 'pending' as const,
-              observation: 'Documento vencido',
-              validityStatus,
-              existingCandidateDocument: matchedDoc,
-              documentCategory: req.document.document_category || undefined,
-              modality: req.modalidade || undefined,
-              obrigatoriedade: req.obrigatoriedade
-            };
-          }
-
-          // Check hours if required
-          if (req.carga_horaria && req.carga_horaria > 0) {
-            const actualHours = matchedDoc.carga_horaria_total || 0;
-            if (actualHours < req.carga_horaria) {
-              return {
-                requirementId: req.id,
-                documentId: req.document_id,
-                documentName: req.document.name,
-                groupName: req.document.group_name,
-                requiredHours: req.carga_horaria,
-                actualHours: actualHours,
-                status: 'partial' as const,
-                observation: actualHours <= 0 
-                  ? `Sem horas registradas, precisa ${req.carga_horaria}h` 
-                  : `Horas insuficientes: tem ${actualHours}h, precisa ${req.carga_horaria}h`,
-                validityStatus,
-                existingCandidateDocument: matchedDoc,
-                documentCategory: req.document.document_category || undefined,
-                modality: req.modalidade || undefined,
-                obrigatoriedade: req.obrigatoriedade
-              };
-            }
-          }
-
-          // Document is valid and meets requirements
-          let observation = 'Requisito atendido';
-          if (validityStatus === 'not_applicable') {
-            observation += ' (validade N/A)';
-          }
-          
+          // Retornar resultado usando a função centralizada
           return {
             requirementId: req.id,
             documentId: req.document_id,
@@ -327,9 +259,9 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             groupName: req.document.group_name,
             requiredHours: req.carga_horaria,
             actualHours: matchedDoc.carga_horaria_total,
-            status: 'fulfilled' as const,
+            status,
             observation,
-            validityStatus,
+            validityStatus: comparisonResult.validityStatus,
             existingCandidateDocument: matchedDoc,
             documentCategory: req.document.document_category || undefined,
             modality: req.modalidade || undefined,
@@ -472,6 +404,20 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
       };
       overall.adherencePercentage = overall.total > 0 ? Math.round((overall.fulfilled / overall.total) * 100) : 0;
 
+      console.log('📊 useCandidateRequirementStatus - Overall calculation:', {
+        candidateId,
+        total: overall.total,
+        fulfilled: overall.fulfilled,
+        partial: overall.partial,
+        pending: overall.pending,
+        adherencePercentage: overall.adherencePercentage,
+        requirementStatuses: requirementStatuses.map(r => ({
+          documentName: r.documentName,
+          status: r.status,
+          observation: r.observation
+        }))
+      });
+
       // Get pending items (pending + partial)
       const pendingItems = requirementStatuses.filter(r => r.status === 'pending' || r.status === 'partial');
 
@@ -502,5 +448,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnReconnect: 'always',
+    refetchOnWindowFocus: true,
+    cacheTime: 0
   });
 };

@@ -16,8 +16,15 @@ export interface Vacancy {
   created_at: string;
   updated_at: string;
   closed_at?: string;
+  company?: string;
+  role_title?: string;
+  matrix_id?: string;
+  salary?: number;
+  due_date?: string;
+  notes?: string;
+  candidates_count?: number;
+  recruiter_id?: string;
   // Campos calculados
-  candidates_count: number;
   matrices?: {
     cargo: string;
     empresa: string;
@@ -35,20 +42,23 @@ export const useVacancies = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: vacancies = [], isLoading } = useQuery({
+  const { data: vacancies = [], isLoading, refetch } = useQuery({
     queryKey: ["vacancies"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("vacancies")
-        .select("*")
+        .select(`
+          *,
+          vacancy_candidates(count)
+        `)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
       
-      // Mapear os dados com valores padrão
+      // Mapear os dados com valores padrão e contagem correta
       const vacanciesWithDefaults = (data || []).map(vacancy => ({
         ...vacancy,
-        candidates_count: 0, // Valor padrão por enquanto
+        candidates_count: vacancy.vacancy_candidates?.[0]?.count || 0,
         matrices: null // Valor padrão por enquanto
       }));
       
@@ -136,6 +146,7 @@ export const useVacancies = () => {
   return {
     vacancies,
     isLoading,
+    refetch,
     createVacancy,
     updateVacancy,
     deleteVacancy,

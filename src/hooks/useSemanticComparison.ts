@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { SEMANTIC_COMPARISON_CONFIG } from '@/config/semanticComparison';
+import { normalizeString, calculateBasicSimilarity } from '@/utils/documentComparison';
 
 interface SemanticComparisonResult {
   similarity: number;
@@ -14,30 +15,6 @@ interface SemanticComparisonOptions {
 
 export const useSemanticComparison = () => {
   const [isLoading, setIsLoading] = useState(false);
-
-  const normalizeString = (str: string): string => {
-    return str
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '') // Remove acentos
-      .replace(/[^\w\s]/g, '') // Remove pontuação
-      .replace(/\s+/g, ' ') // Normaliza espaços
-      .trim();
-  };
-
-  const calculateBasicSimilarity = (text1: string, text2: string): number => {
-    const normalized1 = normalizeString(text1);
-    const normalized2 = normalizeString(text2);
-    
-    // Jaccard similarity
-    const words1 = new Set(normalized1.split(' '));
-    const words2 = new Set(normalized2.split(' '));
-    
-    const intersection = new Set([...words1].filter(x => words2.has(x)));
-    const union = new Set([...words1, ...words2]);
-    
-    return intersection.size / union.size;
-  };
 
   const compareSemantically = async (
     candidateDoc: string,
@@ -178,7 +155,6 @@ export const useSemanticComparison = () => {
 
   return {
     compareSemantically,
-    isLoading,
-    normalizeString
+    isLoading
   };
 };

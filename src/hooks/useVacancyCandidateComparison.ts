@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useQueryClient } from '@tanstack/react-query';
 import { SEMANTIC_COMPARISON_CONFIG } from '@/config/semanticComparison';
+import { compareDocumentWithMatrix, calculateAdherenceStats, normalizeString } from '@/utils/documentComparison';
 
 interface VacancyCandidateComparison {
   candidateId: string;
@@ -27,6 +29,7 @@ interface VacancyDocumentComparison {
   modality: string;
   status: 'Confere' | 'Parcial' | 'Pendente' | 'N/A - Matriz';
   validityStatus: 'Valido' | 'Vencido' | 'N/A';
+  validityDate?: string; // Data de validade do documento do candidato
   observations: string;
   candidateDocument?: {
     id: string;
@@ -234,6 +237,7 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
   const [comparisons, setComparisons] = useState<VacancyCandidateComparison[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const fetchComparisons = async () => {
     if (!vacancyId) return;
@@ -303,10 +307,33 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
       for (const vacancyCandidate of vacancyCandidates || []) {
         const candidate = vacancyCandidate.candidates;
         
-        // Buscar documentos do candidato
+        // Buscar documentos do candidato com todos os campos necessários
         const { data: candidateDocs, error: docsError } = await supabase
           .from('candidate_documents')
-          .select('*')
+          .select(`
+            id,
+            candidate_id,
+            document_name,
+            group_name,
+            catalog_document_id,
+            codigo,
+            sigla_documento,
+            expiry_date,
+            carga_horaria_total,
+            modality,
+            issue_date,
+            detail,
+            document_category,
+            document_type,
+            issuing_authority,
+            registration_number,
+            carga_horaria_teorica,
+            carga_horaria_pratica,
+            link_validacao,
+            file_url,
+            arquivo_original,
+            tipo_de_codigo
+          `)
           .eq('candidate_id', candidate.id);
 
         if (docsError) throw docsError;
@@ -325,107 +352,32 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             continue;
           }
           
-          // Tentar encontrar documento correspondente
-          let matchedDoc = null;
-          let matchType: 'exact_id' | 'exact_code' | 'semantic_name' | 'none' = 'none';
-          let similarityScore = 0;
-          let observations = '';
+          // Preparar dados da matriz com modalidade e carga horária
+          const matrixDocWithDetails = {
+            ...catalogDoc,
+            modality: matrixItem.modalidade,
+            carga_horaria: matrixItem.carga_horaria
+          };
 
-          // 1. Comparação por ID exato
-          matchedDoc = candidateDocs?.find(doc => 
-            doc.catalog_document_id === catalogDoc.id
-          );
-          if (matchedDoc) {
-            matchType = 'exact_id';
-            similarityScore = 1.0;
-          }
+          // Usar a função centralizada de comparação para garantir consistência
+          const comparisonResult = compareDocumentWithMatrix(matrixDocWithDetails, candidateDocs || []);
+          const matchedDoc = comparisonResult.matchedDocument;
+          const matchType = comparisonResult.matchType;
+          const similarityScore = comparisonResult.similarityScore;
+          const observations = comparisonResult.observations;
 
-          // 2. Comparação por código
-          if (!matchedDoc && catalogDoc.codigo) {
-            matchedDoc = candidateDocs?.find(doc => {
-              const docCodigo = doc.codigo;
-              return docCodigo && 
-                docCodigo.toLowerCase().trim() === catalogDoc.codigo.toLowerCase().trim();
-            });
-            if (matchedDoc) {
-              matchType = 'exact_code';
-              similarityScore = 0.95;
-            }
-          }
+          // Usar o status da comparação centralizada
+          const status = comparisonResult.status;
+          const validityStatus = comparisonResult.validityStatus === 'valid' ? 'Valido' : 
+                                comparisonResult.validityStatus === 'expired' ? 'Vencido' : 'N/A';
 
-          // 3. Comparação semântica básica (sem IA para evitar timeout)
-          if (!matchedDoc) {
-            let bestMatch = null;
-            let bestSimilarity = 0;
-
-            for (const candidateDoc of candidateDocs || []) {
-              const basicSimilarity = calculateBasicSimilarity(
-                candidateDoc.document_name,
-                catalogDoc.name
-              );
-              
-              if (basicSimilarity > bestSimilarity && basicSimilarity > 0.6) {
-                bestSimilarity = basicSimilarity;
-                bestMatch = candidateDoc;
-                observations = 'Comparação por palavras-chave similares';
-              }
-            }
-
-            if (bestMatch) {
-              matchedDoc = bestMatch;
-              matchType = 'semantic_name';
-              similarityScore = bestSimilarity;
-            }
-          }
-
-          // Determinar status
-          let status: 'Confere' | 'Parcial' | 'Pendente' | 'N/A - Matriz' = 'Pendente';
-          let validityStatus: 'Valido' | 'Vencido' | 'N/A' = 'N/A';
-
-          if (matchedDoc) {
-            // Verificar validade
-            if (matchedDoc.expiry_date) {
-              const expiry = new Date(matchedDoc.expiry_date);
-              const today = new Date();
-              validityStatus = expiry >= today ? 'Valido' : 'Vencido';
-            } else {
-              validityStatus = 'Valido';
-            }
-
-            // Verificar horas
-            if (matrixItem.carga_horaria && matrixItem.carga_horaria > 0) {
-              const actualHours = matchedDoc.carga_horaria_total || 0;
-              if (actualHours >= matrixItem.carga_horaria) {
-                status = 'Confere';
-                metCount++;
-              } else if (actualHours > 0) {
-                status = 'Parcial';
-                partialCount++;
-                observations = `Matriz exige ${matrixItem.carga_horaria}h; documento informa ${actualHours}h (inferior).`;
-              } else {
-                status = 'Parcial';
-                partialCount++;
-                observations = 'Horas não informadas no documento.';
-              }
-            } else {
-              status = 'Confere';
-              metCount++;
-            }
-
-            // Verificar modalidade
-            if (matrixItem.modalidade && matrixItem.modalidade !== matchedDoc.modality) {
-              if (status === 'Confere') {
-                status = 'Parcial';
-                metCount--;
-                partialCount++;
-              }
-              observations += observations ? ' ' : '';
-              observations += `Matriz exige modalidade ${matrixItem.modalidade}; documento informa ${matchedDoc.modality || 'N/A'}.`;
-            }
+          // Contar documentos por status
+          if (status === 'Confere') {
+            metCount++;
+          } else if (status === 'Parcial') {
+            partialCount++;
           } else {
-            status = 'Pendente';
             pendingCount++;
-            observations = 'Documento ausente.';
           }
 
           documentComparisons.push({
@@ -438,6 +390,7 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             modality: matrixItem.modalidade || '',
             status,
             validityStatus,
+            validityDate: comparisonResult.validityDate, // Incluir data de validade
             observations,
             candidateDocument: matchedDoc ? {
               id: matchedDoc.id,
@@ -453,8 +406,10 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
         }
 
         const totalRequirements = documentComparisons.length;
+        // Usar a mesma lógica do useCandidateRequirementStatus: apenas documentos "Confere" contam como atendidos
+        const fulfilledCount = documentComparisons.filter(doc => doc.status === 'Confere').length;
         const adherencePercentage = totalRequirements > 0 
-          ? Math.round((metCount / totalRequirements) * 100) 
+          ? Math.round((fulfilledCount / totalRequirements) * 100) 
           : 0;
 
         candidateComparisons.push({
@@ -466,7 +421,7 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
           matrixName: `${vacancy.matrices.cargo} - ${vacancy.matrices.empresa}`,
           adherencePercentage,
           totalRequirements,
-          metRequirements: metCount,
+          metRequirements: fulfilledCount,
           partialRequirements: partialCount,
           pendingRequirements: pendingCount,
           documents: documentComparisons
@@ -474,7 +429,27 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
       }
 
       console.log('Comparações concluídas:', candidateComparisons);
+      console.log('📊 Detalhamento das comparações:', candidateComparisons.map(comp => ({
+        candidateName: comp.candidateName,
+        adherencePercentage: comp.adherencePercentage,
+        metRequirements: comp.metRequirements,
+        partialRequirements: comp.partialRequirements,
+        totalRequirements: comp.totalRequirements,
+        documents: comp.documents.map(doc => ({
+          documentName: doc.documentName,
+          status: doc.status,
+          matchType: doc.matchType
+        }))
+      })));
       setComparisons(candidateComparisons);
+      
+      // Invalidar cache do useCandidateRequirementStatus para sincronizar os dados
+      const candidateIds = candidateComparisons.map(comp => comp.candidateId);
+      candidateIds.forEach(candidateId => {
+        queryClient.invalidateQueries({ 
+          queryKey: ['candidate-requirement-status', candidateId] 
+        });
+      });
 
     } catch (err: any) {
       console.error('Erro na comparação de vagas:', err);

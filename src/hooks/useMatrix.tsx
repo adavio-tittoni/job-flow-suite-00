@@ -131,13 +131,20 @@ export function useMatrixItems(matrixId: string) {
         .from("matrix_items")
         .select(`
           *,
-          document:documents_catalog(id, name, categoria, document_type)
+          documents_catalog(id, name, categoria, document_type, sigla_documento, codigo)
         `)
         .eq("matrix_id", matrixId)
         .order("created_at");
 
       if (error) throw error;
-      return data as MatrixItem[];
+      
+      // Transformar os dados para manter compatibilidade
+      const transformedData = data?.map(item => ({
+        ...item,
+        document: item.documents_catalog
+      })) || [];
+      
+      return transformedData as MatrixItem[];
     },
     enabled: !!matrixId,
   });

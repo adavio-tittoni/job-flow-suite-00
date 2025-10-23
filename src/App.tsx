@@ -14,6 +14,8 @@ import UserEditor from "./pages/UserEditor";
 import Candidates from "./pages/Candidates";
 import CandidateDetail from "./pages/CandidateDetail";
 import ImportDocuments from "./pages/ImportDocuments";
+import MatrixCreator from "./pages/MatrixCreator";
+import MatrixEditor from "./pages/MatrixEditor";
 import Matrix from "./pages/Matrix";
 import Documents from "./pages/Documents";
 import NotFound from "./pages/NotFound";
@@ -41,6 +43,8 @@ const App = () => (
             <Route path="/candidates/:id" element={<ProtectedRoute><CandidateDetail /></ProtectedRoute>} />
             <Route path="/candidates/:id/import-documents" element={<ProtectedRoute><ImportDocuments /></ProtectedRoute>} />
             <Route path="/matrix" element={<ProtectedRoute><Matrix /></ProtectedRoute>} />
+            <Route path="/matrix/new" element={<ProtectedRoute><MatrixCreator /></ProtectedRoute>} />
+            <Route path="/matrix/:id" element={<ProtectedRoute><MatrixEditor /></ProtectedRoute>} />
             <Route path="/documents" element={<ProtectedRoute><Documents /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

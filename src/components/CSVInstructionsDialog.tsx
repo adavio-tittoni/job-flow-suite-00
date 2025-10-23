@@ -10,10 +10,14 @@ interface CSVInstructionsDialogProps {
 }
 
 export function CSVInstructionsDialog({ children }: CSVInstructionsDialogProps) {
-  const { exportTemplate, isExporting } = useDocumentImportExport();
+  const { exportTemplate, exportTemplateExcel, isExporting } = useDocumentImportExport();
 
   const handleDownloadTemplate = () => {
     exportTemplate();
+  };
+
+  const handleDownloadTemplateExcel = () => {
+    exportTemplateExcel();
   };
 
   return (
@@ -25,23 +29,29 @@ export function CSVInstructionsDialog({ children }: CSVInstructionsDialogProps) 
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
-            Como usar o modelo CSV
+            Como usar o modelo Excel/CSV
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3">
-          {/* Botão de download */}
+          {/* Botões de download */}
           <Card className="border-blue-200 bg-blue-50">
             <CardContent className="py-4">
-              <div className="flex items-center justify-between">
+              <div className="space-y-3">
                 <div>
                   <h3 className="font-semibold text-blue-900 text-sm">Baixar Modelo</h3>
-                  <p className="text-xs text-blue-700">Clique no botão para baixar o arquivo modelo</p>
+                  <p className="text-xs text-blue-700">Escolha o formato preferido para baixar o arquivo modelo</p>
                 </div>
-                <Button onClick={handleDownloadTemplate} disabled={isExporting} size="sm">
-                  <Download className="h-4 w-4 mr-2" />
-                  {isExporting ? 'Baixando...' : 'Baixar'}
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={handleDownloadTemplateExcel} disabled={isExporting} size="sm" className="flex-1">
+                    <Download className="h-4 w-4 mr-2" />
+                    {isExporting ? 'Baixando...' : 'Excel (.xlsx)'}
+                  </Button>
+                  <Button onClick={handleDownloadTemplate} disabled={isExporting} size="sm" variant="outline" className="flex-1">
+                    <Download className="h-4 w-4 mr-2" />
+                    {isExporting ? 'Baixando...' : 'CSV (.csv)'}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -51,7 +61,46 @@ export function CSVInstructionsDialog({ children }: CSVInstructionsDialogProps) 
             <CardHeader className="pb-2">
               <CardTitle className="text-red-800 flex items-center gap-2 text-sm">
                 <AlertCircle className="h-4 w-4" />
-                Problema Comum
+                Formatos Suportados
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-red-700 text-xs">
+                O sistema agora suporta tanto arquivos Excel (.xlsx, .xls) quanto CSV. 
+                Recomendamos usar Excel para melhor compatibilidade e formatação.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Instruções para Excel */}
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">Como usar com Excel:</h3>
+            
+            <Card className="border-l-4 border-green-500">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-green-800 flex items-center gap-2 text-sm">
+                  <CheckCircle className="h-4 w-4" />
+                  Método 1: Usar Excel diretamente (Recomendado)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ol className="list-decimal list-inside space-y-1 text-xs">
+                  <li>Baixe o modelo CSV usando o botão acima</li>
+                  <li>Abra o arquivo no Excel</li>
+                  <li>Edite os dados conforme necessário</li>
+                  <li>Salve como arquivo Excel (.xlsx)</li>
+                  <li>Use o botão "Importar Excel/CSV" para fazer upload</li>
+                </ol>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Problema identificado */}
+          <Card className="border-red-200 bg-red-50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-red-800 flex items-center gap-2 text-sm">
+                <AlertCircle className="h-4 w-4" />
+                Problema Comum com CSV
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">

@@ -12,8 +12,6 @@ import { Plus, Search, Edit, Trash2, Download, Upload, Settings } from "lucide-r
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useRef } from "react";
-import { MatrixForm } from "@/components/MatrixForm";
-import { MatrixItemsForm } from "@/components/MatrixItemsForm";
 
 const Matrix = () => {
   const navigate = useNavigate();
@@ -30,9 +28,6 @@ const Matrix = () => {
   const [selectedSolicitado, setSelectedSolicitado] = useState("");
   const [selectedUsuario, setSelectedUsuario] = useState("");
   const [matrixToDelete, setMatrixToDelete] = useState<any>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isItemsFormOpen, setIsItemsFormOpen] = useState(false);
-  const [selectedMatrix, setSelectedMatrix] = useState<any>(null);
 
   // Obter valores únicos para filtros
   const uniqueCargos = [...new Set(matrices.map(m => m.cargo))];
@@ -98,23 +93,11 @@ const Matrix = () => {
   };
 
   const handleEdit = (matrix: any) => {
-    setSelectedMatrix(matrix);
-    setIsFormOpen(true);
+    navigate(`/matrix/${matrix.id}`);
   };
 
   const handleManageItems = (matrix: any) => {
-    setSelectedMatrix(matrix);
-    setIsItemsFormOpen(true);
-  };
-
-  const handleFormClose = () => {
-    setIsFormOpen(false);
-    setSelectedMatrix(null);
-  };
-
-  const handleItemsFormClose = () => {
-    setIsItemsFormOpen(false);
-    setSelectedMatrix(null);
+    navigate(`/matrix/${matrix.id}`);
   };
 
   const formatDate = (dateString: string) => {
@@ -184,7 +167,7 @@ const Matrix = () => {
             <Upload className="h-4 w-4 mr-2" />
             {isImporting ? "Importando..." : "Importar Excel"}
           </Button>
-          <Button onClick={() => setIsFormOpen(true)}>
+          <Button onClick={() => navigate('/matrix/new')}>
             <Plus className="mr-2 h-4 w-4" />
             Nova Matriz
           </Button>
@@ -375,19 +358,6 @@ const Matrix = () => {
         accept=".xlsx,.xls"
         onChange={handleFileSelect}
         className="hidden"
-      />
-
-      {/* Forms */}
-      <MatrixForm
-        matrix={selectedMatrix}
-        isOpen={isFormOpen}
-        onClose={handleFormClose}
-      />
-
-      <MatrixItemsForm
-        matrixId={selectedMatrix?.id || ""}
-        isOpen={isItemsFormOpen}
-        onClose={handleItemsFormClose}
       />
     </div>
   );

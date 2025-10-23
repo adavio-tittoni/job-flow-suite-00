@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { compareDocumentWithMatrix, calculateAdherenceStats, normalizeString, ComparisonResult } from '@/utils/documentComparison';
 
 interface MatrixItem {
   id: string;
@@ -31,226 +32,6 @@ interface CandidateDocument {
   detail: string | null;
 }
 
-interface ComparisonResult {
-  status: 'Confere' | 'Parcial' | 'Pendente';
-  validadeStatus: 'Valido' | 'Vencido' | 'N/A';
-  observacoes: string;
-  matchedDocument?: CandidateDocument;
-  similarityScore?: number;
-}
-
-// Função para normalizar strings
-const normalizeString = (str: string): string => {
-  return str
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Remove acentos
-    .replace(/\s+/g, ' ') // Remove espaços duplicados
-    .trim();
-};
-
-// Função para calcular similaridade entre strings (versão simplificada)
-const calculateSimilarity = (str1: string, str2: string): number => {
-  const normalized1 = normalizeString(str1);
-  const normalized2 = normalizeString(str2);
-  
-  // Se são idênticos após normalização
-  if (normalized1 === normalized2) {
-    return 1.0;
-  }
-  
-  // Verificar se um contém o outro
-  if (normalized1.includes(normalized2) || normalized2.includes(normalized1)) {
-    return 0.9;
-  }
-  
-  // Comparação simples por palavras
-  const words1 = normalized1.split(' ').filter(w => w.length > 2);
-  const words2 = normalized2.split(' ').filter(w => w.length > 2);
-  
-  const set1 = new Set(words1);
-  const set2 = new Set(words2);
-  
-  const intersection = new Set([...set1].filter(x => set2.has(x)));
-  const union = new Set([...set1, ...set2]);
-  
-  if (union.size === 0) return 0;
-  
-  return intersection.size / union.size;
-};
-
-// Função para verificar validade
-const checkValidity = (expiryDate: string | null): 'Valido' | 'Vencido' | 'N/A' => {
-  if (!expiryDate || expiryDate.trim() === '' || expiryDate === 'null' || expiryDate === 'undefined') {
-    return 'N/A';
-  }
-  
-  const today = new Date();
-  const expiry = new Date(expiryDate);
-  
-  if (isNaN(expiry.getTime())) {
-    return 'N/A';
-  }
-  
-  return expiry >= today ? 'Valido' : 'Vencido';
-};
-
-// Função para determinar se é documento de identidade
-const isIdentityDocument = (documentName: string): boolean => {
-  const normalized = normalizeString(documentName);
-  const identityKeywords = ['cir', 'rg', 'passaporte', 'identidade', 'registro'];
-  return identityKeywords.some(keyword => normalized.includes(keyword));
-};
-
-// Função para determinar se é certificado de curso
-const isCourseCertificate = (documentName: string): boolean => {
-  const normalized = normalizeString(documentName);
-  const courseKeywords = ['curso', 'treinamento', 'capacitação', 'certificado', 'nr-', 'stcw', 'huet', 'thuet', 'cbsp', 'caebs'];
-  return courseKeywords.some(keyword => normalized.includes(keyword));
-};
-
-// Função principal de comparação seguindo o prompt
-const compareDocumentWithMatrix = (
-  candidateDoc: CandidateDocument,
-  matrixItems: MatrixItem[]
-): ComparisonResult => {
-  
-  // 1. Tentar match por código primeiro
-  let bestMatch: MatrixItem | null = null;
-  let matchType: 'codigo' | 'sigla' | 'similarity' | 'none' = 'none';
-  let similarityScore = 0;
-  
-  if (candidateDoc.codigo) {
-    bestMatch = matrixItems.find(item => 
-      item.documents_catalog.codigo && 
-      normalizeString(item.documents_catalog.codigo) === normalizeString(candidateDoc.codigo)
-    );
-    if (bestMatch) {
-      matchType = 'codigo';
-      similarityScore = 1.0;
-    }
-  }
-  
-  // 2. Se não encontrou por código, tentar por sigla
-  if (!bestMatch && candidateDoc.sigla_documento) {
-    bestMatch = matrixItems.find(item => 
-      item.documents_catalog.sigla_documento && 
-      normalizeString(item.documents_catalog.sigla_documento) === normalizeString(candidateDoc.sigla_documento)
-    );
-    if (bestMatch) {
-      matchType = 'sigla';
-      similarityScore = 0.9;
-    }
-  }
-  
-  // 2. Se não encontrou por código, tentar por similaridade
-  if (!bestMatch) {
-    let bestSimilarity = 0;
-    
-    for (const matrixItem of matrixItems) {
-      const similarity = calculateSimilarity(
-        candidateDoc.document_name,
-        matrixItem.documents_catalog.name
-      );
-      
-      if (similarity > bestSimilarity && similarity >= 0.8) {
-        bestSimilarity = similarity;
-        bestMatch = matrixItem;
-        matchType = 'similarity';
-        similarityScore = similarity;
-      }
-    }
-  }
-  
-  // 3. Se não encontrou correspondência
-  if (!bestMatch) {
-    return {
-      status: 'Pendente',
-      validadeStatus: checkValidity(candidateDoc.expiry_date),
-      observacoes: 'Documento não encontrado na matriz'
-    };
-  }
-  
-  const matrixItem = bestMatch;
-  const validadeStatus = checkValidity(candidateDoc.expiry_date);
-  
-  // 4. Determinar status baseado no tipo de documento
-  if (isIdentityDocument(candidateDoc.document_name)) {
-    // Documentos de identidade: comparação flexível
-    if (validadeStatus === 'Valido' || validadeStatus === 'N/A') {
-      return {
-        status: 'Confere',
-        validadeStatus,
-        observacoes: matchType === 'codigo' ? 'Código confere' : 'Descrição textual difere, mas é equivalente',
-        matchedDocument: candidateDoc,
-        similarityScore
-      };
-    } else {
-      return {
-        status: 'Parcial',
-        validadeStatus,
-        observacoes: 'Documento vencido',
-        matchedDocument: candidateDoc,
-        similarityScore
-      };
-    }
-  }
-  
-  if (isCourseCertificate(candidateDoc.document_name)) {
-    // Certificados de curso: comparação mais rígida
-    let status: 'Confere' | 'Parcial' | 'Pendente' = 'Confere';
-    let observacoes = 'Requisito atendido';
-    
-    // Verificar horas
-    if (matrixItem.carga_horaria && matrixItem.carga_horaria > 0) {
-      const actualHours = candidateDoc.carga_horaria_total || 0;
-      if (actualHours < matrixItem.carga_horaria) {
-        status = 'Parcial';
-        observacoes = `Matriz exige ${matrixItem.carga_horaria}h; documento informa ${actualHours}h (inferior)`;
-      }
-    }
-    
-    // Verificar modalidade
-    if (matrixItem.modalidade && matrixItem.modalidade !== 'N/A') {
-      if (candidateDoc.modality && candidateDoc.modality !== matrixItem.modalidade) {
-        if (status === 'Confere') {
-          status = 'Parcial';
-        }
-        observacoes += observacoes !== 'Requisito atendido' ? ' ' : '';
-        observacoes += `Matriz exige modalidade ${matrixItem.modalidade}; documento informa ${candidateDoc.modality}`;
-      }
-    }
-    
-    // Verificar validade
-    if (validadeStatus === 'Vencido') {
-      status = 'Parcial';
-      observacoes += observacoes !== 'Requisito atendido' ? ' ' : '';
-      observacoes += 'Documento vencido';
-    }
-    
-    // Adicionar informação de similaridade se não foi match por código
-    if (matchType === 'similarity') {
-      observacoes += ` Similaridade: ${Math.round(similarityScore * 100)}%`;
-    }
-    
-    return {
-      status,
-      validadeStatus,
-      observacoes,
-      matchedDocument: candidateDoc,
-      similarityScore
-    };
-  }
-  
-  // Documentos genéricos
-  return {
-    status: similarityScore >= 0.8 ? 'Confere' : 'Pendente',
-    validadeStatus,
-    observacoes: similarityScore >= 0.8 ? 'Requisito atendido' : 'Documento não corresponde ao exigido',
-    matchedDocument: candidateDoc,
-    similarityScore
-  };
-};
 
 export const useAdvancedMatrixComparison = (candidateId: string, matrixId: string | null) => {
   const [comparisonResults, setComparisonResults] = useState<Array<{
@@ -293,18 +74,76 @@ export const useAdvancedMatrixComparison = (candidateId: string, matrixId: strin
 
       if (matrixError) throw matrixError;
 
-      // Filtrar apenas itens com documentos válidos no catálogo
-      const validMatrixItems = matrixItems?.filter(item => 
-        item.documents_catalog && item.documents_catalog.id
-      ) || [];
+      console.log('📊 useAdvancedMatrixComparison: Matrix items fetched', {
+        totalItems: matrixItems?.length || 0,
+        items: matrixItems?.map(item => ({
+          id: item.id,
+          document_id: item.document_id,
+          hasDocumentsCatalog: !!item.documents_catalog,
+          documentsCatalog: item.documents_catalog ? {
+            id: item.documents_catalog.id,
+            name: item.documents_catalog.name,
+            codigo: item.documents_catalog.codigo,
+            sigla_documento: item.documents_catalog.sigla_documento
+          } : 'UNDEFINED'
+        }))
+      });
 
-      // Buscar documentos do candidato
+      // Filtrar apenas itens com documentos válidos no catálogo
+      const validMatrixItems = matrixItems?.filter(item => {
+        const isValid = item.documents_catalog && item.documents_catalog.id;
+        if (!isValid) {
+          console.warn('⚠️ useAdvancedMatrixComparison: Invalid matrix item', {
+            itemId: item.id,
+            document_id: item.document_id,
+            documents_catalog: item.documents_catalog
+          });
+        }
+        return isValid;
+      }) || [];
+
+      // Buscar documentos do candidato com todos os campos necessários
       const { data: candidateDocs, error: docsError } = await supabase
         .from('candidate_documents')
-        .select('*')
+        .select(`
+          id,
+          candidate_id,
+          document_name,
+          group_name,
+          catalog_document_id,
+          codigo,
+          sigla_documento,
+          expiry_date,
+          carga_horaria_total,
+          modality,
+          issue_date,
+          detail,
+          document_category,
+          document_type,
+          issuing_authority,
+          registration_number,
+          carga_horaria_teorica,
+          carga_horaria_pratica,
+          link_validacao,
+          file_url,
+          arquivo_original,
+          tipo_de_codigo
+        `)
         .eq('candidate_id', candidateId);
 
       if (docsError) throw docsError;
+
+      console.log('📊 useAdvancedMatrixComparison: Candidate documents fetched', {
+        candidateId,
+        totalDocs: candidateDocs?.length || 0,
+        docs: candidateDocs?.map(doc => ({
+          id: doc.id,
+          document_name: doc.document_name,
+          catalog_document_id: doc.catalog_document_id,
+          sigla_documento: doc.sigla_documento,
+          codigo: doc.codigo
+        }))
+      });
 
       // Processar comparação para cada item da matriz
       const results: Array<{
@@ -313,38 +152,50 @@ export const useAdvancedMatrixComparison = (candidateId: string, matrixId: strin
       }> = [];
 
       for (const matrixItem of validMatrixItems) {
-        // Encontrar o melhor match entre os documentos do candidato
-        let bestResult: ComparisonResult = {
-          status: 'Pendente',
-          validadeStatus: 'N/A',
-          observacoes: 'Documento não encontrado na matriz'
+        console.log('🔍 useAdvancedMatrixComparison: Processing matrixItem', {
+          matrixItemId: matrixItem.id,
+          documents_catalog: matrixItem.documents_catalog ? {
+            id: matrixItem.documents_catalog.id,
+            name: matrixItem.documents_catalog.name,
+            sigla_documento: matrixItem.documents_catalog.sigla_documento,
+            codigo: matrixItem.documents_catalog.codigo
+          } : 'UNDEFINED',
+          candidateDocsCount: candidateDocs?.length || 0
+        });
+
+        // Preparar dados da matriz com modalidade e carga horária
+        const matrixDocWithDetails = {
+          ...matrixItem.documents_catalog,
+          modality: matrixItem.modalidade,
+          carga_horaria: matrixItem.carga_horaria
         };
 
-        for (const candidateDoc of candidateDocs || []) {
-          const result = compareDocumentWithMatrix(candidateDoc, [matrixItem]);
-          
-          // Se encontrou um match melhor, usar ele
-          if (result.status === 'Confere' || 
-              (result.status === 'Parcial' && bestResult.status === 'Pendente')) {
-            bestResult = result;
-          }
-        }
-
+        // Usar a função centralizada de comparação para garantir consistência
+        const comparisonResult = compareDocumentWithMatrix(matrixDocWithDetails, candidateDocs || []);
+        
         results.push({
           matrixItem,
-          result: bestResult
+          result: comparisonResult
         });
       }
 
       setComparisonResults(results);
       console.log('✅ useAdvancedMatrixComparison: Results updated', { 
+        candidateId,
+        matrixId,
         totalResults: results.length,
         summary: {
           approved: results.filter(r => r.result.status === 'Confere').length,
           partial: results.filter(r => r.result.status === 'Parcial').length,
           pending: results.filter(r => r.result.status === 'Pendente').length,
           adherencePercentage: results.length > 0 ? Math.round((results.filter(r => r.result.status === 'Confere').length / results.length) * 100) : 0
-        }
+        },
+        detailedResults: results.map(r => ({
+          documentName: r.matrixItem.documents_catalog?.name || 'Nome não disponível',
+          status: r.result.status,
+          observations: r.result.observations,
+          similarityScore: r.result.similarityScore
+        }))
       });
 
     } catch (err: any) {
