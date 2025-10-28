@@ -115,6 +115,28 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
     },
   });
 
+  // Sync form when document prop changes (important for editing)
+  useEffect(() => {
+    if (document) {
+      setValue("group_name", document.group_name || "");
+      setValue("document_name", document.document_name);
+      setValue("document_type", document.document_type || "");
+      setValue("modality", document.modality || "");
+      setValue("registration_number", document.registration_number || "");
+      setValue("issue_date", document.issue_date ? document.issue_date.split('T')[0] : "");
+      setValue("expiry_date", document.expiry_date ? document.expiry_date.split('T')[0] : "");
+      setValue("issuing_authority", document.issuing_authority || "");
+      setValue("carga_horaria_total", document.carga_horaria_total || undefined);
+      setValue("carga_horaria_teorica", document.carga_horaria_teorica || undefined);
+      setValue("carga_horaria_pratica", document.carga_horaria_pratica || undefined);
+      setValue("link_validacao", document.link_validacao || "");
+      setValue("file_url", document.file_url || "");
+      setValue("arquivo_original", document.arquivo_original || "");
+      setValue("codigo", document.codigo || "");
+      setSelectedCatalogId(document.catalog_document_id || null);
+    }
+  }, [document, setValue]);
+
   // Load catalog documents
   useEffect(() => {
     const loadCatalogDocuments = async () => {
@@ -125,11 +147,19 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       
       if (!error && data) {
         setCatalogDocuments(data);
+        
+        // Set the selected catalog item if we have a catalog_document_id
+        if (selectedCatalogId) {
+          const selected = data.find(doc => doc.id === selectedCatalogId);
+          if (selected) {
+            setSelectedCatalogItem(selected);
+          }
+        }
       }
     };
     
     loadCatalogDocuments();
-  }, []);
+  }, [selectedCatalogId]);
 
   // Filter documents based on search
   const filteredDocuments = catalogDocuments.filter(doc =>

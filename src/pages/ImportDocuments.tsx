@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useCandidateDocuments } from "@/hooks/useCandidates";
 import { useAIDocumentProcessing } from "@/hooks/useAIDocumentProcessing";
+import { useCandidateVacancyAutoLink } from "@/hooks/useCandidateVacancyAutoLink";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -26,8 +27,11 @@ const ImportDocumentsPage = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { createDocument } = useCandidateDocuments(candidateId!);
-  const { processDocumentWithAI, isProcessing: aiProcessing, progress: aiProgress, sendToN8nWebhook, createProcessingDocument, uploadFileToStorage } = useAIDocumentProcessing();
+  const { processDocumentWithAI, isProcessing: aiProcessing, progress: aiProgress, sendToN8nWebhook, sendToN8nWebhookWithMatrix, createProcessingDocument, uploadFileToStorage } = useAIDocumentProcessing();
   const { toast } = useToast();
+  
+  // Auto-link candidato a vagas quando documentos são importados
+  useCandidateVacancyAutoLink(candidateId!);
 
   const [importedDocuments, setImportedDocuments] = useState<ImportedDocument[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -117,8 +121,8 @@ const ImportDocumentsPage = () => {
         )
       );
 
-      // 3. Enviar para n8n webhook
-      await sendToN8nWebhook([document.file], candidateId!, []);
+      // 3. Enviar para n8n webhook com documentos da matriz
+      await sendToN8nWebhookWithMatrix([document.file], candidateId!, []);
       setImportedDocuments(prev => 
         prev.map(doc => 
           doc.id === document.id 

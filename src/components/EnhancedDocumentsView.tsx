@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle } from 'lucide-react';
-import { useAdvancedMatrixComparison } from '@/hooks/useAdvancedMatrixComparison';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -23,8 +22,86 @@ export const EnhancedDocumentsView = ({
   onAddDocument, 
   onViewDocument 
 }: EnhancedDocumentsViewProps) => {
-  const { comparisonResults, loading, error, refetch } = useAdvancedMatrixComparison(candidateId, matrixId);
   const [activeTab, setActiveTab] = useState('all');
+
+  // Buscar TODOS os itens da matriz e suas comparações (LEFT JOIN)
+  const { data: allMatrixItems, isLoading: loading, error } = useQuery({
+    queryKey: ['matrix-items-comparisons', candidateId, matrixId],
+    queryFn: async () => {
+      if (!matrixId) return [];
+      
+      console.log('🔍 Buscando todos os itens da matriz:', matrixId);
+      
+      // 1. Buscar todos os itens da matriz
+      const { data: matrixItems, error: matrixError } = await supabase
+        .from('matrix_items')
+        .select(`
+          id,
+          obrigatoriedade,
+          modalidade,
+          carga_horaria,
+          documents_catalog (
+            name,
+            codigo,
+            sigla_documento,
+            document_category,
+            categoria,
+            group_name
+          )
+        `)
+        .eq('matrix_id', matrixId);
+
+      if (matrixError) throw matrixError;
+
+      // 2. Buscar comparações existentes para este candidato
+      const { data: comparisons, error: compError } = await supabase
+        .from('document_comparisons')
+        .select('*')
+        .eq('candidate_id', candidateId);
+
+      if (compError) throw compError;
+
+      // 3. Combinar: para cada item da matriz, encontrar sua comparação MAIS RECENTE ou criar status PENDENTE
+      const itemsWithComparisons = matrixItems?.map(item => {
+        // Se houver múltiplas comparações, pegar a mais recente
+        const allComparisons = comparisons?.filter(comp => comp.matrix_item_id === item.id) || [];
+        const comparison = allComparisons.sort((a, b) => {
+          const dateA = new Date(a.created_at || 0).getTime();
+          const dateB = new Date(b.created_at || 0).getTime();
+          return dateB - dateA; // Ordenar por mais recente primeiro
+        })[0]; // Pegar a primeira (mais recente)
+        
+        const status = comparison?.status || 'PENDENTE';
+        
+        console.log('📋 Item da matriz:', {
+          matrixItemId: item.id,
+          hasComparison: !!comparison,
+          status: status,
+          comparisonStatus: comparison?.status,
+          totalComparisons: allComparisons.length,
+          selectedComparisonId: comparison?.id
+        });
+        
+        return {
+          matrixItem: item,
+          comparison,
+          status
+        };
+      }) || [];
+
+      console.log('✅ Itens da matriz com comparações:', itemsWithComparisons.length);
+      console.log('📊 Comparações encontradas:', comparisons?.map(c => ({
+        matrix_item_id: c.matrix_item_id,
+        status: c.status
+      })));
+      return itemsWithComparisons;
+    },
+    enabled: !!candidateId && !!matrixId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  const comparisonResults = allMatrixItems || [];
 
   console.log('🔍 EnhancedDocumentsView: Component state', {
     candidateId,
@@ -52,18 +129,10 @@ export const EnhancedDocumentsView = ({
     enabled: !!matrixId,
   });
 
-  // Force refresh when matrixId changes
+  // Listen for document_comparisons changes to auto-refresh
   useEffect(() => {
-    console.log('🔄 EnhancedDocumentsView: Matrix ID changed, forcing refresh:', matrixId);
-    if (matrixId) {
-      // Use setTimeout to avoid infinite loop
-      const timeoutId = setTimeout(() => {
-        refetch();
-      }, 100);
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [matrixId]); // Remove refetch from dependencies to avoid loop
+    console.log('🔄 EnhancedDocumentsView: Component mounted or matrixId changed:', matrixId);
+  }, [matrixId]);
 
   if (loading) {
     return (
@@ -100,60 +169,57 @@ export const EnhancedDocumentsView = ({
     );
   }
 
-  // Processar dados para exibição
+  // Processar dados da combinação matrix_items + document_comparisons
+  // IMPORTANTE: SEMPRE usar documents_catalog como fonte primária para nome/sigla/código
   const matrixName = vacancy?.title || 'Matriz';
-  const documents = comparisonResults.map(item => {
-    // Validar se documents_catalog existe
-    if (!item.matrixItem.documents_catalog) {
-      console.error('❌ EnhancedDocumentsView: documents_catalog is undefined', {
-        matrixItemId: item.matrixItem.id,
-        matrixItem: item.matrixItem
-      });
-      return {
-        id: item.matrixItem.id,
-        documentName: 'Documento inválido',
-        documentCode: '',
-        category: '',
-        sigla: '',
-        obligation: item.matrixItem.obrigatoriedade || '',
-        requiredHours: item.matrixItem.carga_horaria || 0,
-        modality: item.matrixItem.modalidade || '',
-        status: item.result.status,
-        validityStatus: item.result.validityStatus === 'valid' ? 'Valido' : 
-                       item.result.validityStatus === 'expired' ? 'Vencido' : 'N/A',
-        validityDate: item.result.validityDate,
-        observations: 'Documento da matriz inválido',
-        candidateDocument: item.result.matchedDocument,
-        similarityScore: item.result.similarityScore
-      };
-    }
-
+  const documents = comparisonResults.map((item: any) => {
+    const matrixItem = item.matrixItem;
+    const comparison = item.comparison;
+    const status = item.status; // CONFERE, PARCIAL ou PENDENTE
+    const docCatalog = matrixItem.documents_catalog;
+    
+    // SEMPRE priorizar documents_catalog para informações do documento
+    // comparison contém apenas status e observações da comparação
+    
+    console.log('📄 Processando documento:', {
+      documentName: docCatalog?.name,
+      sigla: docCatalog?.sigla_documento,
+      statusFinal: status,
+      hasComparison: !!comparison,
+      comparisonStatus: comparison?.status
+    });
+    
     return {
-      id: item.matrixItem.id,
-      documentName: item.matrixItem.documents_catalog.name || 'Nome não disponível',
-      documentCode: item.matrixItem.documents_catalog.codigo || '',
-      category: item.matrixItem.documents_catalog.categoria || item.matrixItem.documents_catalog.document_category || '',
-      sigla: item.matrixItem.documents_catalog.sigla_documento || '',
-      obligation: item.matrixItem.obrigatoriedade || '',
-      requiredHours: item.matrixItem.carga_horaria || 0,
-      modality: item.matrixItem.modalidade || '',
-      status: item.result.status,
-      validityStatus: item.result.validityStatus === 'valid' ? 'Valido' : 
-                     item.result.validityStatus === 'expired' ? 'Vencido' : 'N/A',
-      validityDate: item.result.validityDate, // Incluir data de validade
-      observations: item.result.observations,
-      candidateDocument: item.result.matchedDocument,
-      similarityScore: item.result.similarityScore
+      id: matrixItem.id,
+      documentName: docCatalog?.name || 'Nome não disponível',
+      documentCode: docCatalog?.codigo || '',
+      category: docCatalog?.document_category || docCatalog?.categoria || '',
+      sigla: docCatalog?.sigla_documento || '', // SEMPRE da documents_catalog
+      obligation: matrixItem.obrigatoriedade || 'Obrigatório',
+      requiredHours: matrixItem.carga_horaria || 0,
+      modality: matrixItem.modalidade || '',
+      status: status, // CONFERE, PARCIAL ou PENDENTE - FONTE ÚNICA DA VERDADE
+      validityStatus: comparison?.validity_status === 'valid' ? 'Valido' : 
+                     comparison?.validity_status === 'expired' ? 'Vencido' : 
+                     comparison ? 'N/A' : 'Não verificado',
+      validityDate: comparison?.validity_date,
+      observations: comparison?.observations || (status === 'PENDENTE' ? 'Documento ainda não comparado' : '-'),
+      candidateDocument: comparison?.candidate_document_id ? { id: comparison.candidate_document_id } : undefined,
+      similarityScore: comparison?.similarity_score || 0,
+      matrixItemId: matrixItem.id,
+      candidateDocumentId: comparison?.candidate_document_id
     };
   });
 
   const summary = {
     total: documents.length,
-    approved: documents.filter(d => d.status === 'Confere').length,
-    partial: documents.filter(d => d.status === 'Parcial').length,
-    pending: documents.filter(d => d.status === 'Pendente').length,
-    // Usar a mesma lógica do useCandidateRequirementStatus: apenas documentos "Confere" contam como atendidos
-    adherencePercentage: documents.length > 0 ? Math.round((documents.filter(d => d.status === 'Confere').length / documents.length) * 100) : 0
+    approved: documents.filter(d => d.status === 'CONFERE').length,
+    partial: documents.filter(d => d.status === 'PARCIAL').length,
+    pending: documents.filter(d => d.status === 'PENDENTE').length,
+    // Parcial conta 50% para aderência, CONFERE conta 100%
+    adherencePercentage: documents.length > 0 
+      ? Math.round(((documents.filter(d => d.status === 'CONFERE').length) + (documents.filter(d => d.status === 'PARCIAL').length * 0.5)) / documents.length * 100)
+      : 0
   };
 
   console.log('📊 EnhancedDocumentsView: Summary calculated', summary);
@@ -166,11 +232,11 @@ export const EnhancedDocumentsView = ({
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'Confere':
+      case 'CONFERE':
         return <CheckCircle className="h-4 w-4 text-green-600" />;
-      case 'Parcial':
+      case 'PARCIAL':
         return <Clock className="h-4 w-4 text-yellow-600" />;
-      case 'Pendente':
+      case 'PENDENTE':
         return <XCircle className="h-4 w-4 text-red-600" />;
       default:
         return <AlertCircle className="h-4 w-4 text-gray-600" />;
@@ -179,11 +245,11 @@ export const EnhancedDocumentsView = ({
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'Confere':
+      case 'CONFERE':
         return <Badge className="bg-green-100 text-green-800">Confere</Badge>;
-      case 'Parcial':
+      case 'PARCIAL':
         return <Badge className="bg-yellow-100 text-yellow-800">Parcial</Badge>;
-      case 'Pendente':
+      case 'PENDENTE':
         return <Badge className="bg-red-100 text-red-800">Pendente</Badge>;
       default:
         return <Badge variant="outline">Ausente</Badge>;
@@ -220,11 +286,11 @@ export const EnhancedDocumentsView = ({
   const filteredDocuments = documents.filter(doc => {
     switch (activeTab) {
       case 'approved':
-        return doc.status === 'Confere';
+        return doc.status === 'CONFERE';
       case 'pending':
-        return doc.status === 'Pendente';
+        return doc.status === 'PENDENTE';
       case 'partial':
-        return doc.status === 'Parcial';
+        return doc.status === 'PARCIAL';
       default:
         return true;
     }
@@ -263,7 +329,6 @@ export const EnhancedDocumentsView = ({
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={() => refetch()}
                 disabled={loading}
                 className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
               >
@@ -377,9 +442,9 @@ export const EnhancedDocumentsView = ({
                 {filteredDocuments.map((doc) => (
                   <tr key={doc.id} className={cn(
                     "border-b transition-colors",
-                    doc.status === 'Confere' && "hover:bg-green-50",
-                    doc.status === 'Parcial' && "hover:bg-yellow-50", 
-                    doc.status === 'Pendente' && "hover:bg-red-50",
+                    doc.status === 'CONFERE' && "hover:bg-green-50",
+                    doc.status === 'PARCIAL' && "hover:bg-yellow-50", 
+                    doc.status === 'PENDENTE' && "hover:bg-red-50",
                     "hover:bg-gray-50"
                   )}>
                     <td className="p-3">{doc.category || '-'}</td>
@@ -424,7 +489,7 @@ export const EnhancedDocumentsView = ({
                     </td>
                     <td className="p-3">
                       <div className="flex items-center gap-2">
-                        {doc.status === 'Confere' && (
+                        {doc.status === 'CONFERE' && (
                           <div className="flex items-center gap-1">
                             <CheckCircle className="h-4 w-4 text-green-600" />
                             <Badge className="bg-green-100 text-green-800 border-green-200">
@@ -432,7 +497,7 @@ export const EnhancedDocumentsView = ({
                             </Badge>
                           </div>
                         )}
-                        {doc.status === 'Parcial' && (
+                        {doc.status === 'PARCIAL' && (
                           <div className="flex items-center gap-1">
                             <Clock className="h-4 w-4 text-yellow-600" />
                             <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
@@ -440,11 +505,19 @@ export const EnhancedDocumentsView = ({
                             </Badge>
                           </div>
                         )}
-                        {doc.status === 'Pendente' && (
+                        {doc.status === 'PENDENTE' && (
                           <div className="flex items-center gap-1">
                             <XCircle className="h-4 w-4 text-red-600" />
                             <Badge className="bg-red-100 text-red-800 border-red-200">
                               Pendente
+                            </Badge>
+                          </div>
+                        )}
+                        {!doc.status && (
+                          <div className="flex items-center gap-1">
+                            <AlertCircle className="h-4 w-4 text-gray-600" />
+                            <Badge className="bg-gray-100 text-gray-800 border-gray-200">
+                              Não verificado
                             </Badge>
                           </div>
                         )}
@@ -465,7 +538,7 @@ export const EnhancedDocumentsView = ({
                     </td>
                     <td className="p-3">
                       <div className="flex gap-1">
-                        {doc.status === 'Pendente' ? (
+                        {doc.status === 'PENDENTE' ? (
                           <Button
                             size="sm"
                             variant="outline"

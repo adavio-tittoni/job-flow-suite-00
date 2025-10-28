@@ -123,6 +123,12 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
           console.log('Event type:', payload.eventType);
           console.log('New data:', payload.new);
           
+          // Don't refetch if form is open to prevent resetting form state
+          if (isFormOpen) {
+            console.log('Form is open, skipping refetch to prevent form reset');
+            return;
+          }
+          
           // Invalidar e refazer a query para atualizar a UI
           queryClient.invalidateQueries({ queryKey: ["candidate-documents", candidateId] });
           queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidateId] });
@@ -139,7 +145,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       console.log('Cleaning up realtime listener for candidate:', candidateId);
       supabase.removeChannel(channel);
     };
-  }, [candidateId, queryClient]);
+  }, [candidateId, queryClient, isFormOpen]);
 
   // Listen for candidate matrix changes via realtime
   useEffect(() => {

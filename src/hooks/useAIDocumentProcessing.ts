@@ -138,14 +138,13 @@ export const useAIDocumentProcessing = () => {
     // Bucket existe - confirmado via MCP Supabase
     console.log('✅ Bucket candidate-documents existe - pulando verificação');
 
-    const { data: uploadData, error: uploadError } = await supabase.storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
       .from('candidate-documents')
       .upload(fileName, file);
 
     if (uploadError) {
       console.error('Upload error details:', {
         error: uploadError,
-        errorCode: uploadError.statusCode,
         errorMessage: uploadError.message,
         fileName,
         sanitizedFileName,
@@ -818,11 +817,183 @@ export const useAIDocumentProcessing = () => {
     }
   };
 
+  const sendToN8nWebhookWithMatrix = async (
+    files: File[],
+    candidateId: string,
+    processedResults: AIDocumentProcessingResult[] = []
+  ): Promise<void> => {
+    try {
+      console.log('🌐 Iniciando envio de webhook com documentos da matriz...');
+      
+      // 1. Converter arquivos para base64
+      console.log(`📄 Convertendo ${files.length} arquivo(s) para base64...`);
+      const filesWithBase64 = [];
+      
+      for (const file of files) {
+        try {
+          console.log(`📄 Convertendo arquivo: ${file.name}`);
+          const base64 = await fileToBase64(file);
+          filesWithBase64.push({
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            base64: base64,
+            lastModified: file.lastModified
+          });
+          console.log(`✅ Arquivo ${file.name} convertido com sucesso`);
+        } catch (error: any) {
+          console.error(`❌ Erro ao converter ${file.name} para base64:`, error);
+          toast({
+            title: "Erro na conversão",
+            description: `Erro ao converter ${file.name}: ${error.message}`,
+            variant: "destructive",
+          });
+        }
+      }
+
+      console.log(`✅ ${filesWithBase64.length} arquivo(s) convertido(s) para base64`);
+      
+      // 2. Obter candidato e seu matrix_id
+      const { data: candidate, error: candidateError } = await supabase
+        .from('candidates')
+        .select('id, matrix_id')
+        .eq('id', candidateId)
+        .single();
+
+      if (candidateError) {
+        console.error('Erro ao buscar candidato:', candidateError);
+        throw candidateError;
+      }
+
+      if (!candidate.matrix_id) {
+        console.warn('⚠️ Nenhum matrix_id encontrado para o candidato, enviando sem documentos da matriz');
+        return await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
+      }
+
+      console.log('✅ Matrix ID encontrado:', candidate.matrix_id);
+
+      // 3. Buscar todos os itens da matriz com dados do catálogo de documentos
+      const { data: matrixItems, error: matrixError } = await supabase
+        .from('matrix_items')
+        .select(`
+          id,
+          document_id,
+          obrigatoriedade,
+          modalidade,
+          carga_horaria,
+          regra_validade,
+          documents_catalog!inner (
+            id,
+            name,
+            codigo,
+            sigla_documento,
+            document_category,
+            document_type,
+            group_name,
+            categoria
+          )
+        `)
+        .eq('matrix_id', candidate.matrix_id);
+
+      if (matrixError) {
+        console.error('Erro ao buscar itens da matriz:', matrixError);
+        throw matrixError;
+      }
+
+      // 4. Preparar dados dos documentos da matriz
+      const matrixDocuments = matrixItems?.map(item => ({
+        matrix_item_id: item.id,
+        document_id: item.document_id,
+        obrigatoriedade: item.obrigatoriedade,
+        modalidade: item.modalidade,
+        carga_horaria: item.carga_horaria,
+        regra_validade: item.regra_validade,
+        document: item.documents_catalog
+      })) || [];
+
+      console.log('📋 Documentos da matriz preparados:', matrixDocuments.length);
+
+      // 5. Preparar dados do webhook com documentos da matriz
+      const webhookData = {
+        candidate_id: candidateId,
+        matrix_id: candidate.matrix_id,
+        files: filesWithBase64,
+        matrix_documents: matrixDocuments,
+        processed_results: processedResults,
+        timestamp: new Date().toISOString(),
+        total_files: filesWithBase64.length,
+        total_matrix_documents: matrixDocuments.length,
+        webhook_source: 'job-flow-suite',
+        status: 'processing_comparison'
+      };
+
+      console.log('📤 Estrutura de dados do webhook:', {
+        candidate_id: webhookData.candidate_id,
+        matrix_id: webhookData.matrix_id,
+        total_files: webhookData.total_files,
+        total_matrix_documents: webhookData.total_matrix_documents,
+        timestamp: webhookData.timestamp
+      });
+
+      // 5. Enviar para webhook do n8n
+      const webhookUrl = 'https://n8nwebhook.aulan8ntech.shop/webhook/8da335c4-08d9-4ffb-8ce6-7d4ce4e02bdf';
+      
+      const sendWithRetry = async (retryCount = 0) => {
+        try {
+          console.log(`📡 Enviando webhook com documentos da matriz (tentativa ${retryCount + 1})`);
+          
+          const response = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(webhookData)
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ Erro no webhook: ${response.status} - ${errorText}`);
+            
+            if (retryCount < 2) {
+              console.log(`🔄 Tentando novamente (${retryCount + 1})...`);
+              await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+              return sendWithRetry(retryCount + 1);
+            }
+            throw new Error(`Webhook falhou: ${response.status}`);
+          }
+          
+          console.log('✅ Webhook enviado com sucesso com documentos da matriz');
+          const responseText = await response.text();
+          console.log('📥 Resposta do webhook:', responseText);
+        } catch (error) {
+          console.error(`❌ Erro na tentativa ${retryCount + 1}:`, error);
+          if (retryCount < 2) {
+            console.log(`🔄 Tentando novamente devido a erro...`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+            return sendWithRetry(retryCount + 1);
+          }
+          throw error;
+        }
+      };
+
+      return sendWithRetry();
+    } catch (error: any) {
+      console.error('❌ Erro ao enviar webhook com documentos da matriz:', error);
+      toast({
+        title: "Erro no webhook",
+        description: `Erro ao enviar para n8n: ${error.message}`,
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
   return {
     processDocumentWithAI,
     batchProcessDocuments,
     uploadFileToStorage,
     sendToN8nWebhook,
+    sendToN8nWebhookWithMatrix,  // Nova função
     createProcessingDocument,
     updateDocumentWithAIResults,
     isProcessing,
