@@ -77,6 +77,7 @@ export type Database = {
           carga_horaria_teorica: number | null
           carga_horaria_total: number | null
           catalog_document_id: string | null
+          codigo: string | null
           created_at: string
           detail: string | null
           document_category: string | null
@@ -92,6 +93,7 @@ export type Database = {
           modality: string | null
           registration_number: string | null
           sigla_documento: string | null
+          tipo_de_codigo: string | null
           updated_at: string
         }
         Insert: {
@@ -101,6 +103,7 @@ export type Database = {
           carga_horaria_teorica?: number | null
           carga_horaria_total?: number | null
           catalog_document_id?: string | null
+          codigo?: string | null
           created_at?: string
           detail?: string | null
           document_category?: string | null
@@ -116,6 +119,7 @@ export type Database = {
           modality?: string | null
           registration_number?: string | null
           sigla_documento?: string | null
+          tipo_de_codigo?: string | null
           updated_at?: string
         }
         Update: {
@@ -125,6 +129,7 @@ export type Database = {
           carga_horaria_teorica?: number | null
           carga_horaria_total?: number | null
           catalog_document_id?: string | null
+          codigo?: string | null
           created_at?: string
           detail?: string | null
           document_category?: string | null
@@ -140,6 +145,7 @@ export type Database = {
           modality?: string | null
           registration_number?: string | null
           sigla_documento?: string | null
+          tipo_de_codigo?: string | null
           updated_at?: string
         }
         Relationships: [

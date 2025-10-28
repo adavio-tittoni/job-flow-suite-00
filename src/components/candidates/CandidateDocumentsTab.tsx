@@ -34,7 +34,7 @@ import { CandidateIndicators } from "./CandidateIndicators";
 import { EnhancedDocumentsView } from "../EnhancedDocumentsView";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useCandidateRequirementStatus, type RequirementStatus } from "@/hooks/useCandidateRequirementStatus";
+import { useCandidateRequirementStatus, type RequirementStatus, type RequirementStatusResult } from "@/hooks/useCandidateRequirementStatus";
 import { useN8nWebhookListener } from "@/hooks/useN8nWebhookListener";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -186,7 +186,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     if (!requirementStatus) return '-';
     
     // Find the requirement status for this document in pendingItems
-    const matchingRequirement = requirementStatus.pendingItems.find(req => 
+    const matchingRequirement = (requirementStatus as RequirementStatusResult).pendingItems.find(req => 
       req.existingCandidateDocument?.id === document.id ||
       (req.documentName === document.document_name && req.groupName === document.group_name)
     );
@@ -411,7 +411,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   };
 
   const handleExportPending = async () => {
-    if (!requirementStatus || requirementStatus.pendingItems.length === 0) {
+    if (!requirementStatus || (requirementStatus as RequirementStatusResult).pendingItems.length === 0) {
       toast({
         title: "Nenhum documento pendente",
         description: "Não há documentos pendentes para exportar.",
@@ -450,7 +450,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     const currentDateTime = format(now, 'dd/MM/yy - HH:mm');
 
     // Prepare CSV data for pending documents
-    const csvData = requirementStatus.pendingItems.map(item => ({
+    const csvData = (requirementStatus as RequirementStatusResult).pendingItems.map(item => ({
       'Departamento': item.groupName || '',
       'Tipo': item.documentCategory || '-',
       'Documento': item.documentName || '',
@@ -505,7 +505,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     } else if (diffDays <= 30) {
       return <Badge variant="secondary">Vence em {diffDays} dias</Badge>;
     } else {
-      return <Badge variant="info">Válido</Badge>;
+      return <Badge variant="default">Válido</Badge>;
     }
   };
 
@@ -563,7 +563,6 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                   group_name: data.group_name,
                   document_category: data.document_category,
                   document_type: data.document_type,
-                  codigo: data.codigo,
                   catalog_document_id: catalogDocId,
                 });
                 setIsFormOpen(true);
@@ -744,7 +743,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                     <TableRow>
                       <TableHead>Categoria</TableHead>
                       <TableHead>Sigla</TableHead>
-                      <TableHead>Código</TableHead>
+                      <TableHead>Tipo Código</TableHead>
                       <TableHead>Documento</TableHead>
                       <TableHead>Horas Total</TableHead>
                       <TableHead>Modalidade</TableHead>
@@ -759,7 +758,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                   <TableRow key={document.id}>
                      <TableCell>{document.document_category || "-"}</TableCell>
                      <TableCell>{document.sigla_documento || "N/A"}</TableCell>
-                     <TableCell className="font-mono">{document.codigo || "-"}</TableCell>
+                     <TableCell className="font-mono">{document.tipo_de_codigo || "-"}</TableCell>
                      <TableCell className="font-medium">{document.document_name}</TableCell>
                      <TableCell>{document.carga_horaria_total ? `${document.carga_horaria_total}h` : "-"}</TableCell>
                      <TableCell>{document.modality || "-"}</TableCell>

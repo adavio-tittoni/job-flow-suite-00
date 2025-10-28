@@ -1,9 +1,11 @@
 /**
  * Função centralizada para comparação de documentos seguindo a semântica definida:
- * 1. Nome do curso (português ou inglês) → Comparado com certificado do candidato
- * 2. Sigla do documento → Comparado com sigla do documento do candidato  
- * 3. Código do curso → Comparado com código do curso do candidato
+ * Versão 3.0 - Motor de Regras com Validação de Hierarquia STCW
+ * Sequência de comparação: ID → Código (com STCW) → Sigla → Nome Semântico → Nome Exato
+ * Critérios de status: Validade e Horas (modalidade apenas informativa)
  */
+
+import { validateSTCWHierarchy } from '@/config/stcwHierarchy';
 
 
 export interface CandidateDocument {
@@ -11,6 +13,7 @@ export interface CandidateDocument {
   document_name: string;
   sigla_documento?: string;
   codigo?: string;
+  tipo_de_codigo?: string; // Tipo de código (ex: A-VI/3, NR-33)
   catalog_document_id?: string;
   carga_horaria_total?: number;
   modality?: string;
@@ -157,8 +160,7 @@ export const checkModalityCompatibility = (matrixModality?: string, candidateMod
 };
 
 /**
- * Gera observações simplificadas e úteis
- * Foca apenas em informações relevantes para o recrutador
+ * Gera observações detalhadas seguindo o motor de regras STCW
  */
 export const generateDetailedObservations = (
   matrixDoc: MatrixDocument,
@@ -166,14 +168,15 @@ export const generateDetailedObservations = (
   matchType: string,
   similarityScore: number,
   validityStatus: string,
-  modalityCompatible: boolean // Sempre true agora (apenas informativo)
+  modalityCompatible: boolean = true,
+  modalityNote?: string
 ): string => {
   const observations: string[] = [];
   
-  // Adicionar tipo de match de forma simples
+  // Adicionar tipo de match de forma detalhada
   switch (matchType) {
     case 'exact_id':
-      observations.push('Match exato por ID');
+      observations.push('Match exato por ID do catálogo');
       break;
     case 'exact_name':
       observations.push('Nome do curso idêntico');
@@ -182,7 +185,12 @@ export const generateDetailedObservations = (
       observations.push('Sigla idêntica');
       break;
     case 'exact_code':
-      observations.push('Código idêntico');
+      // Verificar se foi validação STCW
+      if (matrixDoc.codigo && matchedDoc.tipo_de_codigo) {
+        observations.push('Hierarquia STCW válida');
+      } else {
+        observations.push('Código idêntico');
+      }
       break;
     case 'semantic_name':
       observations.push('Nome do curso com algumas diferenças');
@@ -198,11 +206,21 @@ export const generateDetailedObservations = (
     }
   }
   
-  // Mostrar status de validade de forma simples
+  // Mostrar diferenças de modalidade (informativo)
+  if (!modalityCompatible && modalityNote) {
+    observations.push(modalityNote);
+  }
+  
+  // Mostrar status de validade
   if (validityStatus === 'expired') {
     observations.push('Documento vencido');
   } else if (validityStatus === 'valid') {
     observations.push('Documento válido');
+  }
+  
+  // Mostrar similaridade se relevante
+  if (similarityScore < 1 && similarityScore > 0) {
+    observations.push(`Similaridade: ${Math.round(similarityScore * 100)}%`);
   }
   
   return observations.join(' | ');
@@ -258,32 +276,76 @@ export const compareDocumentWithMatrix = (
     similarityScore = 1.0;
   }
 
-  // 2. Comparação por CÓDIGO (segunda prioridade) - Melhorada para encontrar códigos no nome
+  // 2. Comparação por CÓDIGO com validação STCW (segunda prioridade)
   if (!matchedDoc && matrixDoc.codigo) {
     const matrixCode = normalizeString(matrixDoc.codigo);
     
-    // Buscar por código exato primeiro
-    matchedDoc = candidateDocs?.find(doc => {
-      const docCodigo = doc.codigo;
-      return docCodigo && 
-        normalizeString(docCodigo) === matrixCode;
-    });
+    // Prioridade 1: Validar hierarquia STCW com tipo_de_codigo
+    for (const doc of candidateDocs || []) {
+      if (doc.tipo_de_codigo && validateSTCWHierarchy(matrixCode, doc.tipo_de_codigo)) {
+        matchedDoc = doc;
+        matchType = 'exact_code';
+        similarityScore = 0.95; // Alto score para hierarquia STCW
+        break;
+      }
+    }
     
-    // Se não encontrou por código exato, buscar por código no nome do documento
+    // Prioridade 2: Buscar por tipo_de_codigo exato
+    if (!matchedDoc) {
+      matchedDoc = candidateDocs?.find(doc => {
+        const docTipoCodigo = doc.tipo_de_codigo;
+        return docTipoCodigo && 
+          normalizeString(docTipoCodigo) === matrixCode;
+      });
+      if (matchedDoc) {
+        matchType = 'exact_code';
+        similarityScore = 0.95;
+      }
+    }
+    
+    // Prioridade 3: Buscar por código no campo codigo
+    if (!matchedDoc) {
+      matchedDoc = candidateDocs?.find(doc => {
+        const docCodigo = doc.codigo;
+        return docCodigo && 
+          normalizeString(docCodigo) === matrixCode;
+      });
+      if (matchedDoc) {
+        matchType = 'exact_code';
+        similarityScore = 0.9;
+      }
+    }
+    
+    // Prioridade 4: Buscar por código no nome do documento
     if (!matchedDoc) {
       matchedDoc = candidateDocs?.find(doc => {
         const docName = normalizeString(doc.document_name);
         return docName.includes(matrixCode);
       });
-    }
-    
-    if (matchedDoc) {
-      matchType = 'exact_code';
-      similarityScore = 0.9;
+      if (matchedDoc) {
+        matchType = 'exact_code';
+        similarityScore = 0.85;
+      }
     }
   }
 
-  // 3. Comparação semântica por NOME (terceira prioridade) - Com IA como fallback
+  // 3. Comparação por SIGLA (MUITO IMPORTANTE - terceira prioridade)
+  if (!matchedDoc && matrixDoc.sigla_documento) {
+    const matrixSigla = normalizeString(matrixDoc.sigla_documento);
+    
+    matchedDoc = candidateDocs?.find(doc => {
+      const docSigla = doc.sigla_documento;
+      return docSigla && 
+        normalizeString(docSigla) === matrixSigla;
+    });
+    
+    if (matchedDoc) {
+      matchType = 'exact_sigla';
+      similarityScore = 0.9; // Aumentado para garantir status "Confere"
+    }
+  }
+
+  // 4. Comparação semântica por NOME (quarta prioridade - DEPOIS DA SIGLA)
   if (!matchedDoc && matrixDoc.name) {
     let bestMatch = null;
     let bestSimilarity = 0;
@@ -306,19 +368,6 @@ export const compareDocumentWithMatrix = (
       matchedDoc = bestMatch;
       matchType = 'semantic_name';
       similarityScore = bestSimilarity;
-    }
-  }
-
-  // 4. Comparação por SIGLA (quarta prioridade)
-  if (!matchedDoc && matrixDoc.sigla_documento) {
-    matchedDoc = candidateDocs?.find(doc => {
-      const docSigla = doc.sigla_documento;
-      return docSigla && 
-        normalizeString(docSigla) === normalizeString(matrixDoc.sigla_documento);
-    });
-    if (matchedDoc) {
-      matchType = 'exact_sigla';
-      similarityScore = 0.85;
     }
   }
 
@@ -346,41 +395,63 @@ export const compareDocumentWithMatrix = (
     };
   }
 
-  // Verificar validade do documento
+  // ========== ETAPA C: Verificar validade (prazo)
   const validityStatus = checkValidity(matchedDoc.expiry_date);
   
-  // Verificar carga horária se especificada na matriz
+  // ========== ETAPA D: Verificar requisitos de qualidade
+  // D.1: Carga horária
   let hoursCompatible = true;
   if (matrixDoc.carga_horaria && matrixDoc.carga_horaria > 0) {
     const candidateHours = matchedDoc.carga_horaria_total || 0;
     hoursCompatible = candidateHours >= matrixDoc.carga_horaria;
   }
+  
+  // D.2: Modalidade (informativa, não bloqueia status)
+  let modalityCompatible = true;
+  let modalityNote = '';
+  if (matrixDoc.modality && matrixDoc.modality !== 'N/A' && matchedDoc.modality) {
+    const matrixMod = normalizeString(matrixDoc.modality);
+    const candidateMod = normalizeString(matchedDoc.modality);
+    
+    if (matrixMod === 'presencial' && candidateMod !== 'presencial') {
+      modalityCompatible = false;
+      modalityNote = 'Modalidade EAD quando Presencial é exigido';
+    } else if (matrixMod !== candidateMod) {
+      modalityCompatible = false;
+      modalityNote = `Modalidade diferente (${matchedDoc.modality} vs ${matrixDoc.modality})`;
+    }
+  }
 
-  // Determinar status baseado na validade, similaridade e horas (SEM modalidade)
+  // ========== DETERMINAR STATUS FINAL ==========
   let status: 'Confere' | 'Parcial' | 'Pendente';
   
-  // Se documento vencido, sempre parcial
+  // Se documento vencido, sempre PARCIAL
   if (validityStatus === 'expired') {
     status = 'Parcial';
   }
-  // Se horas insuficientes, sempre parcial
+  // Se horas insuficientes, sempre PARCIAL
   else if (!hoursCompatible) {
     status = 'Parcial';
   }
-  // Se match exato (ID, nome, código, sigla), confere
-  else if (matchType === 'exact_id' || matchType === 'exact_name' || matchType === 'exact_code' || matchType === 'exact_sigla') {
+  // Se match exato (ID, código STCW, sigla), CONFERE
+  else if (matchType === 'exact_id' || matchType === 'exact_code' || matchType === 'exact_sigla') {
     status = 'Confere';
   }
-  // Se match semântico com alta similaridade, confere (não parcial)
+  // Se match por nome exato, CONFERE
+  else if (matchType === 'exact_name') {
+    status = 'Confere';
+  }
+  // Se match por nome com alta similaridade (>=90%), CONFERE
   else if (matchType === 'semantic_name' && similarityScore >= 0.9) {
     status = 'Confere';
   }
-  // Se match semântico com baixa similaridade, parcial
-  else if (matchType === 'semantic_name') {
+  // Se match por nome com média similaridade (80-89%), PARCIAL
+  else if (matchType === 'semantic_name' && similarityScore >= 0.8) {
     status = 'Parcial';
   }
+  // Outros casos, PARCIAL
   else {
-    status = 'Pendente';
+    status = 'Parcial';
   }
 
   // Gerar observações detalhadas
@@ -390,7 +461,8 @@ export const compareDocumentWithMatrix = (
     matchType,
     similarityScore,
     validityStatus,
-    true // Modalidade sempre compatível (apenas informativa)
+    modalityCompatible,
+    modalityNote
   );
 
     return {

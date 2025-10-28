@@ -54,8 +54,8 @@ export interface CandidateDocument {
   catalog_document_id?: string;
   detail?: string;
   arquivo_original?: string;
-  sigla_documento?: string;
   codigo?: string; // Custom document code for matrix comparison
+  tipo_de_codigo?: string; // Type of code (e.g., A-VI/3, NR-33)
 }
 
 export interface CandidateHistory {
@@ -201,15 +201,16 @@ export const useCandidateDocuments = (candidateId: string) => {
 
       if (error) throw error;
       
-      // Transform the data to flatten the categoria from catalog, but keep original sigla_documento and codigo
+      // Transform the data to flatten the categoria from catalog, but keep original sigla_documento, codigo and tipo_de_codigo
       const transformedData = data?.map(doc => {
         console.log('Processing document:', doc.document_name, 'catalog:', doc.documents_catalog);
         return {
           ...doc,
           document_category: doc.documents_catalog?.categoria || doc.document_category || null,
-          // Manter sigla_documento e codigo originais do documento do candidato
+          // Manter sigla_documento, codigo e tipo_de_codigo originais do documento do candidato
           sigla_documento: doc.sigla_documento || doc.documents_catalog?.sigla_documento || null,
           codigo: doc.codigo || null,
+          tipo_de_codigo: doc.tipo_de_codigo || null,
           documents_catalog: undefined // Remove the nested object
         };
       }) || [];

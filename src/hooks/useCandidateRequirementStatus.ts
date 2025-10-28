@@ -76,6 +76,14 @@ export interface NonRequiredDocument {
   group_name: string | null;
 }
 
+export interface RequirementStatusResult {
+  overall: OverallStatus;
+  departments: DepartmentStatus[];
+  obligations: ObligationStatus[];
+  pendingItems: RequirementStatus[];
+  nonRequiredDocuments: NonRequiredDocument[];
+}
+
 
 // Utility function to safely parse dates
 const parseDate = (dateString: string | null | undefined): Date | null => {
