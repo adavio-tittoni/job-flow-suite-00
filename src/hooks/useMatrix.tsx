@@ -131,7 +131,7 @@ export function useMatrixItems(matrixId: string) {
         .from("matrix_items")
         .select(`
           *,
-          documents_catalog(id, name, categoria, document_type, sigla_documento, codigo)
+          documents_catalog(id, name, categoria, document_type, sigla_documento, codigo, nome_curso, sigla, group_name)
         `)
         .eq("matrix_id", matrixId)
         .order("created_at");

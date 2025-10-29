@@ -93,13 +93,22 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
   const saveDocument = async (data: DocumentFormData) => {
     try {
+      // Garantir que o campo 'name' esteja preenchido para compatibilidade com busca e exibição
+      // Se name estiver vazio, usar nome_curso como fallback
+      const documentData = {
+        ...data,
+        name: data.name || data.nome_curso || "",
+        // Também garantir que sigla_documento seja preenchido se sigla estiver preenchido
+        sigla_documento: data.sigla_documento || data.sigla || undefined,
+      };
+
       if (document) {
-        await updateDocument.mutateAsync({ id: document.id, ...data });
+        await updateDocument.mutateAsync({ id: document.id, ...documentData });
         toast({
           title: "Documento atualizado com sucesso!",
         });
       } else {
-        await createDocument.mutateAsync(data);
+        await createDocument.mutateAsync(documentData);
         toast({
           title: "Documento criado com sucesso!",
         });

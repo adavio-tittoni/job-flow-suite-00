@@ -85,7 +85,8 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
       const { data, error } = await supabase
         .from('documents_catalog')
         .select('*')
-        .order('name');
+        .order('nome_curso', { ascending: true, nullsFirst: false })
+        .order('name', { ascending: true, nullsFirst: false });
       
       if (!error && data) {
         setDocuments(data);
@@ -101,12 +102,22 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
     if (!searchTerm) {
       setFilteredDocuments(documents);
     } else {
-      const filtered = documents.filter(doc => 
-        doc.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        doc.categoria.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (doc.sigla_documento && doc.sigla_documento.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (doc.codigo && doc.codigo.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
+      const searchLower = searchTerm.toLowerCase();
+      const filtered = documents.filter(doc => {
+        const name = (doc.name || doc.nome_curso || "").toLowerCase();
+        const categoria = (doc.categoria || "").toLowerCase();
+        const siglaDoc = (doc.sigla_documento || doc.sigla || "").toLowerCase();
+        const codigo = (doc.codigo || "").toLowerCase();
+        const nomeCurso = (doc.nome_curso || "").toLowerCase();
+        const grupo = (doc.group_name || "").toLowerCase();
+        
+        return name.includes(searchLower) ||
+          categoria.includes(searchLower) ||
+          siglaDoc.includes(searchLower) ||
+          codigo.includes(searchLower) ||
+          nomeCurso.includes(searchLower) ||
+          grupo.includes(searchLower);
+      });
       setFilteredDocuments(filtered);
     }
   }, [searchTerm, documents]);
@@ -136,6 +147,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
         });
       } else {
         // Create new item
+        const selectedDoc = documents.find(d => d.id === data.document_id);
         await createMatrixItem.mutateAsync({
           matrix_id: matrixId,
           document_id: data.document_id,
@@ -145,8 +157,8 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
           regra_validade: data.regra_validade,
           document: {
             id: data.document_id,
-            name: documents.find(d => d.id === data.document_id)?.name || "",
-            categoria: documents.find(d => d.id === data.document_id)?.categoria || "",
+            name: selectedDoc?.nome_curso || selectedDoc?.name || "",
+            categoria: selectedDoc?.categoria || "",
           }
         });
         
@@ -260,7 +272,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
 
   const getDocumentName = (documentId: string) => {
     const doc = documents.find(d => d.id === documentId);
-    return doc?.name || "Documento não encontrado";
+    return doc?.nome_curso || doc?.name || "Documento não encontrado";
   };
 
   const getDocumentCategory = (documentId: string) => {
@@ -341,8 +353,9 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                       <TableHeader>
                         <TableRow>
                           <TableHead className="w-16">Ação</TableHead>
-                          <TableHead>Departamento</TableHead>
-                          <TableHead>Tipo</TableHead>
+                          <TableHead>Categoria</TableHead>
+                          <TableHead className="w-32">Código</TableHead>
+                          <TableHead className="w-32">Sigla</TableHead>
                           <TableHead>Documento</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -355,7 +368,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                               selectedDocuments.includes(doc.id) && "bg-gray-100"
                             )}
                           >
-                            <TableCell>
+                            <TableCell className="align-middle">
                               {selectedDocuments.includes(doc.id) ? (
                                 <Badge variant="secondary" className="text-xs">
                                   Selecionado
@@ -371,32 +384,31 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                                 </Button>
                               )}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="align-middle">
                               <Badge variant="outline" className="text-xs">
-                                {doc.categoria || "N/A"}
+                                {doc.categoria || doc.group_name || "N/A"}
                               </Badge>
                             </TableCell>
-                            <TableCell>
-                              <div className="space-y-1">
-                                {doc.codigo && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    {doc.codigo}
-                                  </Badge>
-                                )}
-                                {doc.sigla_documento && (
-                                  <Badge variant="outline" className="text-xs">
-                                    {doc.sigla_documento}
-                                  </Badge>
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="font-medium">{doc.name}</div>
-                              {doc.group_name && (
-                                <div className="text-sm text-gray-500">
-                                  {doc.group_name}
-                                </div>
+                            <TableCell className="align-middle">
+                              {doc.codigo ? (
+                                <Badge variant="secondary" className="text-xs whitespace-nowrap">
+                                  {doc.codigo}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">-</span>
                               )}
+                            </TableCell>
+                            <TableCell className="align-middle">
+                              {(doc.sigla_documento || doc.sigla) ? (
+                                <Badge variant="outline" className="text-xs whitespace-nowrap">
+                                  {doc.sigla_documento || doc.sigla}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="align-middle">
+                              <div className="font-medium">{doc.nome_curso || doc.name || "Sem nome"}</div>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -553,7 +565,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                   >
                     <TableCell>
                       <div>
-                        <div className="font-medium">{item.document.name}</div>
+                        <div className="font-medium">{(item.document as any)?.nome_curso || item.document.name || "Sem nome"}</div>
                         <div className="text-sm text-gray-500">
                           {item.document.categoria}
                         </div>
