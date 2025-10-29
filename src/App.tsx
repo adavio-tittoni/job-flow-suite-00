@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
+import { AdminRoute } from "@/components/layout/AdminRoute";
 import Auth from "./pages/Auth";
 import Pipeline from "./pages/Pipeline";
 import Vacancies from "./pages/Vacancies";
@@ -36,9 +37,9 @@ const App = () => (
             <Route path="/vacancies" element={<ProtectedRoute><Vacancies /></ProtectedRoute>} />
             <Route path="/vacancies/new" element={<ProtectedRoute><VacancyEditor /></ProtectedRoute>} />
             <Route path="/vacancies/:id" element={<ProtectedRoute><VacancyEditor /></ProtectedRoute>} />
-            <Route path="/users" element={<ProtectedRoute><Users /></ProtectedRoute>} />
-            <Route path="/users/new" element={<ProtectedRoute><UserEditor /></ProtectedRoute>} />
-            <Route path="/users/:id" element={<ProtectedRoute><UserEditor /></ProtectedRoute>} />
+            <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />
+            <Route path="/users/new" element={<AdminRoute><UserEditor /></AdminRoute>} />
+            <Route path="/users/:id" element={<AdminRoute><UserEditor /></AdminRoute>} />
             <Route path="/candidates" element={<ProtectedRoute><Candidates /></ProtectedRoute>} />
             <Route path="/candidates/:id" element={<ProtectedRoute><CandidateDetail /></ProtectedRoute>} />
             <Route path="/candidates/:id/import-documents" element={<ProtectedRoute><ImportDocuments /></ProtectedRoute>} />

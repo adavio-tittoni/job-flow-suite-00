@@ -1,4 +1,4 @@
-import { Briefcase, Users, LayoutGrid, FileText, UserCheck } from "lucide-react";
+import { Briefcase, Users, LayoutGrid, FileText } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
@@ -6,7 +6,6 @@ const menuItems = [
   { title: "Pipeline", url: "/pipeline", icon: Briefcase },
   { title: "Vagas", url: "/vacancies", icon: Briefcase },
   { title: "Candidatos", url: "/candidates", icon: Users },
-  { title: "Usuários", url: "/users", icon: UserCheck },
   { title: "Matriz", url: "/matrix", icon: LayoutGrid },
   { title: "Documentos", url: "/documents", icon: FileText },
 ];

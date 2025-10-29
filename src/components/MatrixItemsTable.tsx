@@ -555,22 +555,41 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {matrixItems.map((item) => (
-                  <TableRow 
-                    key={item.id}
-                    className={cn(
-                      "hover:bg-gray-50",
-                      editingItem?.id === item.id && "bg-green-50"
-                    )}
-                  >
-                    <TableCell>
-                      <div>
-                        <div className="font-medium">{(item.document as any)?.nome_curso || item.document.name || "Sem nome"}</div>
-                        <div className="text-sm text-gray-500">
-                          {item.document.categoria}
+                {matrixItems.map((item) => {
+                  const doc = item.document as any;
+                  const categoria = doc?.categoria || doc?.group_name || "-";
+                  const codigo = doc?.codigo || "-";
+                  const sigla = doc?.sigla_documento || doc?.sigla || "-";
+                  const nomeCurso = doc?.nome_curso || doc?.name || "Sem nome";
+                  
+                  return (
+                    <TableRow 
+                      key={item.id}
+                      className={cn(
+                        "hover:bg-gray-50",
+                        editingItem?.id === item.id && "bg-green-50"
+                      )}
+                    >
+                      <TableCell>
+                        <div className="space-y-1.5">
+                          <div className="font-medium">{nomeCurso}</div>
+                          <div className="flex flex-wrap gap-2 items-center">
+                            <Badge variant="secondary" className="text-xs">
+                              {categoria}
+                            </Badge>
+                            {codigo !== "-" && (
+                              <span className="text-xs text-gray-600 font-medium">
+                                Código: <span className="text-gray-800">{codigo}</span>
+                              </span>
+                            )}
+                            {sigla !== "-" && (
+                              <Badge variant="outline" className="text-xs">
+                                {sigla}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
+                      </TableCell>
                     <TableCell>
                       <Badge 
                         variant={item.obrigatoriedade === 'Obrigatório' ? 'default' : 'secondary'}
@@ -624,7 +643,8 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
                 
                 {matrixItems.length === 0 && (
                   <TableRow>

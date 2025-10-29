@@ -8,7 +8,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertCircle, CheckCircle, XCircle, TrendingUp, Users, Target, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useCandidateRequirementStatus } from "@/hooks/useCandidateRequirementStatus";
 import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
 
 interface Candidate {
@@ -166,6 +165,7 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
                 getInitials={getInitials}
                 getProgressVariant={getProgressVariant}
                 getCompatibilityLevel={getCompatibilityLevel}
+                vacancyId={vacancyId}
               />
             ))}
           </div>
@@ -179,18 +179,24 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
   );
 };
 
+
 interface CandidateOverviewCardProps {
   candidate: Candidate;
   matrixItems: MatrixItem[];
   getInitials: (name: string) => string;
   getProgressVariant: (percentage: number) => string;
   getCompatibilityLevel: (percentage: number) => { level: string; color: string; icon: any };
+  vacancyId: string;
 }
 
-const CandidateOverviewCard = ({ candidate, matrixItems, getInitials, getProgressVariant, getCompatibilityLevel }: CandidateOverviewCardProps) => {
-  const { data: adherenceData, isLoading } = useCandidateRequirementStatus(candidate.id);
+const CandidateOverviewCard = ({ candidate, matrixItems, getInitials, getProgressVariant, getCompatibilityLevel, vacancyId }: CandidateOverviewCardProps) => {
+  // Usar useVacancyCandidateComparison para ter os mesmos dados do detalhado
+  const { comparisons, loading } = useVacancyCandidateComparison(vacancyId);
   
-  if (isLoading) {
+  // Buscar os dados deste candidato específico nas comparações
+  const candidateComparison = comparisons.find(comp => comp.candidateId === candidate.id);
+  
+  if (loading) {
     return (
       <Card>
         <CardContent className="p-4">
@@ -203,7 +209,22 @@ const CandidateOverviewCard = ({ candidate, matrixItems, getInitials, getProgres
     );
   }
 
-  const compatibility = getCompatibilityLevel(adherenceData?.overall.adherencePercentage || 0);
+  if (!candidateComparison) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-center py-2">
+            <p className="text-xs text-muted-foreground">
+              Dados não disponíveis
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const adherencePercentage = candidateComparison.adherencePercentage;
+  const compatibility = getCompatibilityLevel(adherencePercentage);
   const IconComponent = compatibility.icon;
 
   return (
@@ -236,17 +257,17 @@ const CandidateOverviewCard = ({ candidate, matrixItems, getInitials, getProgres
           <div>
             <div className="flex justify-between text-sm mb-1">
               <span>Aderência</span>
-              <span className="font-medium">{adherenceData?.overall.adherencePercentage || 0}%</span>
+              <span className="font-medium">{adherencePercentage}%</span>
             </div>
             <Progress 
-              value={adherenceData?.overall.adherencePercentage || 0} 
-              variant={getProgressVariant(adherenceData?.overall.adherencePercentage || 0)}
+              value={adherencePercentage} 
+              variant={getProgressVariant(adherencePercentage)}
               className="h-2"
             />
           </div>
 
           <div className="text-xs text-muted-foreground">
-            {adherenceData?.overall.fulfilled || 0} de {adherenceData?.overall.total || 0} requisitos atendidos
+            {candidateComparison.metRequirements} de {candidateComparison.totalRequirements} requisitos atendidos
           </div>
         </div>
       </CardContent>
@@ -394,6 +415,8 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                   <TableRow>
                     <TableHead>Status</TableHead>
                     <TableHead>Validade</TableHead>
+                    <TableHead>Categoria</TableHead>
+                    <TableHead>Sigla</TableHead>
                     <TableHead>Documento</TableHead>
                     <TableHead>Código</TableHead>
                     <TableHead>Obrigatoriedade</TableHead>
@@ -413,6 +436,16 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                       </TableCell>
                       <TableCell>
                         {getValidityBadge(doc.validityStatus)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="text-xs">
+                          {doc.category || '-'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm font-mono">
+                          {doc.sigla || '-'}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">

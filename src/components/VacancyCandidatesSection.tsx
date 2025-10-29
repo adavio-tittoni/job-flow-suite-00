@@ -11,7 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Plus, X, User, CheckIcon, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { useCandidateRequirementStatus } from "@/hooks/useCandidateRequirementStatus";
+import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
 import { useAuth } from "@/hooks/useAuth";
 import CandidateMatrixComparison from "./CandidateMatrixComparison";
 
@@ -292,6 +292,7 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
                 key={vacancyCandidate.id}
                 vacancyCandidate={vacancyCandidate}
                 matrixId={matrixId}
+                vacancyId={vacancyId}
                 onRemove={() => setCandidateToRemove(vacancyCandidate)}
                 onViewCandidate={() => navigate(`/candidates/${vacancyCandidate.candidate_id}?from=vacancy&vacancyId=${vacancyId}`)}
               />
@@ -330,15 +331,19 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
 interface CandidateCardProps {
   vacancyCandidate: VacancyCandidate;
   matrixId: string | null;
+  vacancyId: string;
   onRemove: () => void;
   onViewCandidate: () => void;
 }
 
-const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }: CandidateCardProps) => {
+const CandidateCard = ({ vacancyCandidate, matrixId, vacancyId, onRemove, onViewCandidate }: CandidateCardProps) => {
   const { candidate } = vacancyCandidate;
   
-  // Use the unified hook for consistency with detail view
-  const { data: adherenceData, isLoading: isAdherenceLoading } = useCandidateRequirementStatus(candidate.id);
+  // Usar useVacancyCandidateComparison para ter os mesmos dados da visão geral e detalhada
+  const { comparisons, loading: isAdherenceLoading } = useVacancyCandidateComparison(vacancyId);
+  
+  // Buscar os dados deste candidato específico nas comparações
+  const candidateComparison = comparisons.find(comp => comp.candidateId === candidate.id);
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -397,60 +402,63 @@ const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }
               <Loader2 className="h-4 w-4 animate-spin" />
               <span className="text-xs text-muted-foreground">Calculando aderência...</span>
             </div>
-          ) : adherenceData?.obligations && adherenceData.obligations.length > 0 ? (
+          ) : candidateComparison ? (
             <div>
               {/* Seção destacada com fundo azul escuro - aderência geral */}
               <div className="bg-primary text-primary-foreground p-3 rounded-lg mb-3">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-sm font-medium">Aderência:</p>
                   <span className="text-sm font-bold">
-                    {adherenceData.overall.adherencePercentage}%
+                    {candidateComparison.adherencePercentage}%
                   </span>
                 </div>
                 <Progress 
-                  value={adherenceData.overall.adherencePercentage} 
-                  variant={getProgressVariant(adherenceData.overall.adherencePercentage)}
+                  value={candidateComparison.adherencePercentage} 
+                  variant={getProgressVariant(candidateComparison.adherencePercentage)}
                   className="h-2 bg-primary-hover"
                 />
                 <div className="text-xs mt-1 opacity-90">
-                  <span className="font-medium">{adherenceData.overall.fulfilled} atendidos</span>
+                  <span className="font-medium">{candidateComparison.metRequirements} atendidos</span>
                 </div>
               </div>
               <div className="space-y-2">
                 
-                {adherenceData.obligations
-                  .filter(obligation => obligation.total > 0)
-                  .map((obligation) => (
-                    <div key={`${obligation.type}-${obligation.label}`} className="space-y-1">
+                {(() => {
+                  const mandatoryDocs = candidateComparison.documents.filter(doc => doc.obligation === 'Obrigatório');
+                  const mandatoryMet = mandatoryDocs.filter(doc => doc.status === 'Confere').length;
+                  const mandatoryPartial = mandatoryDocs.filter(doc => doc.status === 'Parcial').length;
+                  const mandatoryTotal = mandatoryDocs.length;
+                  const mandatoryPercentage = mandatoryTotal > 0 
+                    ? Math.round(((mandatoryMet) + (mandatoryPartial * 0.5)) / mandatoryTotal * 100)
+                    : 0;
+                  
+                  if (mandatoryTotal === 0) return null;
+                  
+                  return (
+                    <div className="space-y-1">
                       <div className="flex justify-between items-center text-xs">
-                        <span className="font-medium text-foreground truncate">{obligation.label}</span>
-                        <span className="text-muted-foreground ml-2">{obligation.adherencePercentage}%</span>
+                        <span className="font-medium text-foreground truncate">Mandatório</span>
+                        <span className="text-muted-foreground ml-2">{mandatoryPercentage}%</span>
                       </div>
                       <div className="space-y-1">
                         <Progress 
-                          value={obligation.adherencePercentage} 
-                          variant={getProgressVariant(obligation.adherencePercentage)}
+                          value={mandatoryPercentage} 
+                          variant={getProgressVariant(mandatoryPercentage)}
                           className="h-1.5"
                         />
                         <div className="text-xs text-muted-foreground">
-                          {obligation.fulfilled} de {obligation.total} requisitos
+                          {mandatoryMet} de {mandatoryTotal} requisitos
                         </div>
                       </div>
                     </div>
-                  ))
-                }
+                  );
+                })()}
               </div>
-              {adherenceData.nonRequiredDocuments && adherenceData.nonRequiredDocuments.length > 0 && (
-                <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                  <span>N/A. DOCS:</span>
-                  <span>{adherenceData.nonRequiredDocuments.length}</span>
-                </div>
-              )}
             </div>
           ) : (
             <div className="text-center py-2">
               <p className="text-xs text-muted-foreground">
-                Candidato sem matriz atribuída
+                {!matrixId ? 'Vincule uma matriz à vaga para ver aderência' : 'Dados não disponíveis'}
               </p>
             </div>
           )}
@@ -461,3 +469,5 @@ const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }
 };
 
 export default VacancyCandidatesSection;
+
+

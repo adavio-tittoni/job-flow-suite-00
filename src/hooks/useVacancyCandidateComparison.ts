@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useQueryClient } from '@tanstack/react-query';
-import { SEMANTIC_COMPARISON_CONFIG } from '@/config/semanticComparison';
-import { compareDocumentWithMatrix, calculateAdherenceStats, normalizeString } from '@/utils/documentComparison';
 
 interface VacancyCandidateComparison {
   candidateId: string;
@@ -23,6 +21,7 @@ interface VacancyDocumentComparison {
   requirementId: string;
   documentName: string;
   documentCode: string;
+  sigla?: string; // Sigla do documento (mesmo formato que EnhancedDocumentsView)
   category: string;
   obligation: string;
   requiredHours: number;
@@ -280,7 +279,7 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
       if (candidatesError) throw candidatesError;
       console.log('Candidatos encontrados:', vacancyCandidates);
 
-      // 3. Buscar requisitos da matriz
+      // 3. Buscar requisitos da matriz com TODOS os campos necessários
       const { data: matrixItems, error: matrixError } = await supabase
         .from('matrix_items')
         .select(`
@@ -293,7 +292,10 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             id,
             name,
             codigo,
-            document_category
+            sigla_documento,
+            document_category,
+            group_name,
+            categoria
           )
         `)
         .eq('matrix_id', vacancy.matrix_id);
@@ -307,36 +309,13 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
       for (const vacancyCandidate of vacancyCandidates || []) {
         const candidate = vacancyCandidate.candidates;
         
-        // Buscar documentos do candidato com todos os campos necessários
-        const { data: candidateDocs, error: docsError } = await supabase
-          .from('candidate_documents')
-          .select(`
-            id,
-            candidate_id,
-            document_name,
-            group_name,
-            catalog_document_id,
-            codigo,
-            sigla_documento,
-            expiry_date,
-            carga_horaria_total,
-            modality,
-            issue_date,
-            detail,
-            document_category,
-            document_type,
-            issuing_authority,
-            registration_number,
-            carga_horaria_teorica,
-            carga_horaria_pratica,
-            link_validacao,
-            file_url,
-            arquivo_original,
-            tipo_de_codigo
-          `)
+        // Buscar comparações da tabela document_comparisons (MESMA FONTE que EnhancedDocumentsView)
+        const { data: comparisons, error: compError } = await supabase
+          .from('document_comparisons')
+          .select('*')
           .eq('candidate_id', candidate.id);
 
-        if (docsError) throw docsError;
+        if (compError) throw compError;
 
         // Processar cada requisito da matriz
         const documentComparisons: VacancyDocumentComparison[] = [];
@@ -352,26 +331,49 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             continue;
           }
           
-          // Preparar dados da matriz com modalidade e carga horária
-          const matrixDocWithDetails = {
-            ...catalogDoc,
-            modality: matrixItem.modalidade,
-            carga_horaria: matrixItem.carga_horaria
-          };
+          // Buscar comparação na tabela document_comparisons (mesma lógica que EnhancedDocumentsView)
+          // Se houver múltiplas comparações, pegar a mais recente
+          const allComparisons = comparisons?.filter(comp => comp.matrix_item_id === matrixItem.id) || [];
+          const comparison = allComparisons.sort((a, b) => {
+            const dateA = new Date(a.created_at || 0).getTime();
+            const dateB = new Date(b.created_at || 0).getTime();
+            return dateB - dateA; // Ordenar por mais recente primeiro
+          })[0]; // Pegar a primeira (mais recente)
+          
+          // Usar status da tabela document_comparisons (fonte única da verdade)
+          // Status na tabela é: 'CONFERE' | 'PARCIAL' | 'PENDENTE' (maiúsculas)
+          const statusFromTable = comparison?.status || 'PENDENTE';
+          // Converter para o formato usado no componente (primeira letra maiúscula)
+          const status = statusFromTable === 'CONFERE' ? 'Confere' : 
+                        statusFromTable === 'PARCIAL' ? 'Parcial' : 'Pendente';
 
-          // Usar a função centralizada de comparação para garantir consistência
-          const comparisonResult = compareDocumentWithMatrix(matrixDocWithDetails, candidateDocs || []);
-          const matchedDoc = comparisonResult.matchedDocument;
-          const matchType = comparisonResult.matchType;
-          const similarityScore = comparisonResult.similarityScore;
-          const observations = comparisonResult.observations;
+          // Buscar documento do candidato se houver ID vinculado
+          let candidateDocument = undefined;
+          if (comparison?.candidate_document_id) {
+            const { data: candidateDoc } = await supabase
+              .from('candidate_documents')
+              .select('id, document_name, codigo, carga_horaria_total, modality, expiry_date')
+              .eq('id', comparison.candidate_document_id)
+              .single();
+            
+            if (candidateDoc) {
+              candidateDocument = {
+                id: candidateDoc.id,
+                name: candidateDoc.document_name,
+                code: candidateDoc.codigo || '',
+                hours: candidateDoc.carga_horaria_total || 0,
+                modality: candidateDoc.modality || '',
+                expiryDate: candidateDoc.expiry_date || ''
+              };
+            }
+          }
 
-          // Usar o status da comparação centralizada
-          const status = comparisonResult.status;
-          const validityStatus = comparisonResult.validityStatus === 'valid' ? 'Valido' : 
-                                comparisonResult.validityStatus === 'expired' ? 'Vencido' : 'N/A';
+          // Converter validity_status da tabela
+          const validityStatusFromTable = comparison?.validity_status;
+          const validityStatus = validityStatusFromTable === 'valid' ? 'Valido' : 
+                                validityStatusFromTable === 'expired' ? 'Vencido' : 'N/A';
 
-          // Contar documentos por status
+          // Contar documentos por status (usar mesma lógica que EnhancedDocumentsView)
           if (status === 'Confere') {
             metCount++;
           } else if (status === 'Parcial') {
@@ -384,32 +386,30 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             requirementId: matrixItem.id,
             documentName: catalogDoc.name,
             documentCode: catalogDoc.codigo || '',
-            category: catalogDoc.document_category || '',
+            // Usar mesma lógica que EnhancedDocumentsView: sigla_documento da documents_catalog
+            sigla: catalogDoc.sigla_documento || '',
+            // Usar mesma lógica que EnhancedDocumentsView: document_category ou categoria
+            category: catalogDoc.document_category || catalogDoc.categoria || '',
             obligation: matrixItem.obrigatoriedade || '',
             requiredHours: matrixItem.carga_horaria || 0,
             modality: matrixItem.modalidade || '',
             status,
             validityStatus,
-            validityDate: comparisonResult.validityDate, // Incluir data de validade
-            observations,
-            candidateDocument: matchedDoc ? {
-              id: matchedDoc.id,
-              name: matchedDoc.document_name,
-              code: matchedDoc.codigo || '',
-              hours: matchedDoc.carga_horaria_total || 0,
-              modality: matchedDoc.modality || '',
-              expiryDate: matchedDoc.expiry_date || ''
-            } : undefined,
-            similarityScore,
-            matchType
+            validityDate: comparison?.validity_date, // Data de validade da comparação
+            observations: comparison?.observations || (status === 'Pendente' ? 'Documento ainda não comparado' : ''),
+            candidateDocument,
+            similarityScore: comparison?.similarity_score,
+            matchType: comparison?.match_type as any
           });
         }
 
         const totalRequirements = documentComparisons.length;
-        // Usar a mesma lógica do useCandidateRequirementStatus: apenas documentos "Confere" contam como atendidos
-        const fulfilledCount = documentComparisons.filter(doc => doc.status === 'Confere').length;
+        // Usar a mesma lógica do EnhancedDocumentsView: CONFERE conta 100%, PARCIAL conta 50%
+        const confereCount = documentComparisons.filter(doc => doc.status === 'Confere').length;
+        const parcialCount = documentComparisons.filter(doc => doc.status === 'Parcial').length;
+        const pendenteCount = documentComparisons.filter(doc => doc.status === 'Pendente').length;
         const adherencePercentage = totalRequirements > 0 
-          ? Math.round((fulfilledCount / totalRequirements) * 100) 
+          ? Math.round(((confereCount) + (parcialCount * 0.5)) / totalRequirements * 100) 
           : 0;
 
         candidateComparisons.push({
@@ -421,9 +421,9 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
           matrixName: `${vacancy.matrices.cargo} - ${vacancy.matrices.empresa}`,
           adherencePercentage,
           totalRequirements,
-          metRequirements: fulfilledCount,
-          partialRequirements: partialCount,
-          pendingRequirements: pendingCount,
+          metRequirements: confereCount,
+          partialRequirements: parcialCount,
+          pendingRequirements: pendenteCount,
           documents: documentComparisons
         });
       }
