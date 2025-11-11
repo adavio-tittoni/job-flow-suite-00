@@ -49,6 +49,9 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
   const [loading, setLoading] = useState(true);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateToRemove, setCandidateToRemove] = useState<VacancyCandidate | null>(null);
+  
+  // Buscar comparações para ordenar os cards
+  const { comparisons } = useVacancyCandidateComparison(vacancyId);
 
   const fetchVacancyCandidates = async () => {
     try {
@@ -287,16 +290,29 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {vacancyCandidates.map((vacancyCandidate) => (
-              <CandidateCard
-                key={vacancyCandidate.id}
-                vacancyCandidate={vacancyCandidate}
-                matrixId={matrixId}
-                vacancyId={vacancyId}
-                onRemove={() => setCandidateToRemove(vacancyCandidate)}
-                onViewCandidate={() => navigate(`/candidates/${vacancyCandidate.candidate_id}?from=vacancy&vacancyId=${vacancyId}`)}
-              />
-            ))}
+            {(() => {
+              // Ordenar candidatos por aderência (maior para menor)
+              const sortedCandidates = [...vacancyCandidates].sort((a, b) => {
+                const comparisonA = comparisons.find(comp => comp.candidateId === a.candidate_id);
+                const comparisonB = comparisons.find(comp => comp.candidateId === b.candidate_id);
+                
+                const adherenceA = comparisonA?.adherencePercentage || 0;
+                const adherenceB = comparisonB?.adherencePercentage || 0;
+                
+                return adherenceB - adherenceA; // Maior para menor
+              });
+              
+              return sortedCandidates.map((vacancyCandidate) => (
+                <CandidateCard
+                  key={vacancyCandidate.id}
+                  vacancyCandidate={vacancyCandidate}
+                  matrixId={matrixId}
+                  vacancyId={vacancyId}
+                  onRemove={() => setCandidateToRemove(vacancyCandidate)}
+                  onViewCandidate={() => navigate(`/candidates/${vacancyCandidate.candidate_id}?from=vacancy&vacancyId=${vacancyId}`)}
+                />
+              ));
+            })()}
           </div>
 
           {/* Comparação com Matriz */}

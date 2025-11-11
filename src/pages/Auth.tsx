@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -11,15 +11,16 @@ export default function Auth() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, loading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Redirecionar se já estiver autenticado
-  if (isAuthenticated) {
-    navigate("/pipeline");
-    return null;
-  }
+  // Redirecionar se já estiver autenticado (após o carregamento inicial)
+  useEffect(() => {
+    if (!loading && isAuthenticated) {
+      navigate("/pipeline");
+    }
+  }, [isAuthenticated, loading, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,10 +59,10 @@ export default function Auth() {
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
             <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-3xl">M</span>
+              <span className="text-primary-foreground font-bold text-3xl">C</span>
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold">MHLC Certificações</CardTitle>
+          <CardTitle className="text-2xl font-bold">CertifAi</CardTitle>
           <CardDescription>Sistema de Gestão de Recrutamento</CardDescription>
         </CardHeader>
         <CardContent>

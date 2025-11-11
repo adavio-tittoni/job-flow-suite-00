@@ -2,21 +2,10 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertCircle, CheckCircle, XCircle, TrendingUp, Users, Target, Clock } from "lucide-react";
+import { AlertCircle, CheckCircle, XCircle, Target, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
-
-interface Candidate {
-  id: string;
-  name: string;
-  role_title: string;
-  photo_url: string;
-  notes: string;
-}
 
 interface MatrixItem {
   id: string;
@@ -37,35 +26,18 @@ interface CandidateMatrixComparisonProps {
 }
 
 const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixComparisonProps) => {
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [matrixItems, setMatrixItems] = useState<MatrixItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!matrixId) return;
+      if (!matrixId) {
+        setLoading(false);
+        return;
+      }
       
       try {
         setLoading(true);
-
-        // Buscar candidatos vinculados à vaga
-        const { data: vacancyCandidates, error: vacancyError } = await supabase
-          .from('vacancy_candidates')
-          .select(`
-            candidates!inner (
-              id,
-              name,
-              role_title,
-              photo_url,
-              notes
-            )
-          `)
-          .eq('vacancy_id', vacancyId);
-
-        if (vacancyError) throw vacancyError;
-
-        const candidatesData = vacancyCandidates?.map(item => item.candidates) || [];
-        setCandidates(candidatesData);
 
         // Buscar itens da matriz
         const { data: matrixData, error: matrixError } = await supabase
@@ -95,32 +67,7 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
     };
 
     fetchData();
-  }, [vacancyId, matrixId]);
-
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-  };
-
-  const getProgressVariant = (percentage: number) => {
-    if (percentage >= 80) return "success";
-    if (percentage >= 50) return "warning";
-    return "danger";
-  };
-
-  const getCompatibilityLevel = (percentage: number) => {
-    if (percentage >= 90) return { level: "Excelente", color: "bg-green-100 text-green-800", icon: CheckCircle };
-    if (percentage >= 70) return { level: "Boa", color: "bg-blue-100 text-blue-800", icon: TrendingUp };
-    if (percentage >= 50) return { level: "Regular", color: "bg-yellow-100 text-yellow-800", icon: AlertCircle };
-    return { level: "Baixa", color: "bg-red-100 text-red-800", icon: XCircle };
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <p className="text-muted-foreground">Carregando comparação...</p>
-      </div>
-    );
-  }
+  }, [matrixId]);
 
   if (!matrixId) {
     return (
@@ -131,157 +78,23 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
     );
   }
 
-  if (candidates.length === 0) {
-    return (
-      <div className="text-center py-8">
-        <Users className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        <p className="text-muted-foreground">Adicione candidatos à vaga para ver a comparação.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Comparação com Matriz</h3>
-        <Badge variant="outline">
-          {matrixItems.length} requisitos
-        </Badge>
+        {!loading && (
+          <Badge variant="outline">
+            {matrixItems.length} requisitos
+          </Badge>
+        )}
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-          <TabsTrigger value="detailed">Detalhado</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {candidates.map((candidate) => (
-              <CandidateOverviewCard 
-                key={candidate.id} 
-                candidate={candidate} 
-                matrixItems={matrixItems}
-                getInitials={getInitials}
-                getProgressVariant={getProgressVariant}
-                getCompatibilityLevel={getCompatibilityLevel}
-                vacancyId={vacancyId}
-              />
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="detailed" className="space-y-4">
-          <DetailedComparisonTable vacancyId={vacancyId} matrixId={matrixId} />
-        </TabsContent>
-      </Tabs>
+      <DetailedComparisonTable vacancyId={vacancyId} matrixId={matrixId} />
     </div>
   );
 };
 
 
-interface CandidateOverviewCardProps {
-  candidate: Candidate;
-  matrixItems: MatrixItem[];
-  getInitials: (name: string) => string;
-  getProgressVariant: (percentage: number) => string;
-  getCompatibilityLevel: (percentage: number) => { level: string; color: string; icon: any };
-  vacancyId: string;
-}
-
-const CandidateOverviewCard = ({ candidate, matrixItems, getInitials, getProgressVariant, getCompatibilityLevel, vacancyId }: CandidateOverviewCardProps) => {
-  // Usar useVacancyCandidateComparison para ter os mesmos dados do detalhado
-  const { comparisons, loading } = useVacancyCandidateComparison(vacancyId);
-  
-  // Buscar os dados deste candidato específico nas comparações
-  const candidateComparison = comparisons.find(comp => comp.candidateId === candidate.id);
-  
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-            <span className="text-sm text-muted-foreground">Calculando...</span>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!candidateComparison) {
-    return (
-      <Card>
-        <CardContent className="p-4">
-          <div className="text-center py-2">
-            <p className="text-xs text-muted-foreground">
-              Dados não disponíveis
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const adherencePercentage = candidateComparison.adherencePercentage;
-  const compatibility = getCompatibilityLevel(adherencePercentage);
-  const IconComponent = compatibility.icon;
-
-  return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Avatar className="h-10 w-10">
-            <AvatarImage src={candidate.photo_url} />
-            <AvatarFallback>
-              {getInitials(candidate.name)}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <h4 className="font-medium truncate">{candidate.name}</h4>
-            {candidate.role_title && (
-              <p className="text-sm text-muted-foreground truncate">{candidate.role_title}</p>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Compatibilidade:</span>
-            <Badge className={compatibility.color}>
-              <IconComponent className="h-3 w-3 mr-1" />
-              {compatibility.level}
-            </Badge>
-          </div>
-
-          <div>
-            <div className="flex justify-between text-sm mb-1">
-              <span>Aderência</span>
-              <span className="font-medium">{adherencePercentage}%</span>
-            </div>
-            <Progress 
-              value={adherencePercentage} 
-              variant={getProgressVariant(adherencePercentage)}
-              className="h-2"
-            />
-          </div>
-
-          <div className="text-xs text-muted-foreground">
-            {candidateComparison.metRequirements} de {candidateComparison.totalRequirements} requisitos atendidos
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-interface CandidateDetailedCardProps {
-  candidate: Candidate;
-  matrixItems: MatrixItem[];
-  getInitials: (name: string) => string;
-  getProgressVariant: (percentage: number) => string;
-  getCompatibilityLevel: (percentage: number) => { level: string; color: string; icon: any };
-}
 
 interface DetailedComparisonTableProps {
   vacancyId: string;
@@ -369,9 +182,14 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
     );
   }
 
+  // Ordenar comparações por aderência (maior para menor)
+  const sortedComparisons = [...comparisons].sort((a, b) => {
+    return b.adherencePercentage - a.adherencePercentage; // Maior para menor
+  });
+
   return (
     <div className="space-y-4">
-      {comparisons.map((comparison) => (
+      {sortedComparisons.map((comparison) => (
         <Card key={comparison.candidateId}>
           <CardHeader>
             <div className="flex items-center justify-between">

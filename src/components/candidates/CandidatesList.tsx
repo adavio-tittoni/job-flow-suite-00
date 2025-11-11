@@ -164,14 +164,13 @@ export const CandidatesList = () => {
                   <TableHead>Telefone</TableHead>
                   <TableHead>LinkedIn</TableHead>
                   <TableHead>Cargo</TableHead>
-                  <TableHead>Status</TableHead>
                   <TableHead>Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredCandidates.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8">
+                    <TableCell colSpan={6} className="text-center py-8">
                       Nenhum candidato encontrado
                     </TableCell>
                   </TableRow>
@@ -217,15 +216,6 @@ export const CandidatesList = () => {
                         )}
                       </TableCell>
                       <TableCell>{candidate.role_title || "-"}</TableCell>
-                      <TableCell>
-                        <Badge variant={
-                          candidate.working_status === "Trabalhando" ? "default" : 
-                          candidate.working_status === "Disponível" ? "secondary" : 
-                          "outline"
-                        }>
-                          {candidate.working_status || "Não informado"}
-                        </Badge>
-                      </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
                           <Button

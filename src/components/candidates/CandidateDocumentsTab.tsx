@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Edit, Trash2, FileDown, Eye, Upload, RefreshCw } from "lucide-react";
+import { Plus, Trash2, FileDown, Eye, Upload, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 
 // Utility function to safely format dates
@@ -198,11 +198,6 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     );
     
     return matchingRequirement?.observation || '-';
-  };
-
-  const handleEdit = (document: CandidateDocument) => {
-    setSelectedDocument(document);
-    setIsFormOpen(true);
   };
 
   const handleDelete = (id: string) => {
@@ -797,14 +792,6 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                             </Button>
                           )
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEdit(document)}
-                          title="Editar documento"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"

@@ -327,6 +327,69 @@ export function useDocumentImportExport() {
     }
   };
 
+  const exportDocumentsExcel = async (documents: any[]) => {
+    try {
+      setIsExporting(true);
+      
+      // Preparar dados para exportação
+      const exportData = documents.map(doc => ({
+        'categoria': doc.categoria || '',
+        'codigo': doc.codigo || '',
+        'sigla': doc.sigla || '',
+        'nome_curso': doc.nome_curso || doc.name || '',
+        'descricao_curso': doc.descricao_curso || '',
+        'carga_horaria': doc.carga_horaria || '',
+        'validade': doc.validade || '',
+        'modalidade': doc.modalidade || '',
+        'detalhes': doc.detalhes || '',
+        'url_site': doc.url_site || '',
+        'flag_requisito': doc.flag_requisito || '',
+        'nome_ingles': doc.nome_ingles || ''
+      }));
+
+      // Criar workbook
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      
+      // Ajustar largura das colunas
+      const columnWidths = [
+        { wch: 25 }, // categoria
+        { wch: 15 }, // codigo
+        { wch: 10 }, // sigla
+        { wch: 40 }, // nome_curso
+        { wch: 50 }, // descricao_curso
+        { wch: 15 }, // carga_horaria
+        { wch: 15 }, // validade
+        { wch: 15 }, // modalidade
+        { wch: 40 }, // detalhes
+        { wch: 30 }, // url_site
+        { wch: 15 }, // flag_requisito
+        { wch: 40 }  // nome_ingles
+      ];
+      worksheet['!cols'] = columnWidths;
+      
+      // Adicionar worksheet ao workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Documentos');
+      
+      // Baixar arquivo
+      XLSX.writeFile(workbook, 'documentos.xlsx');
+
+      toast({
+        title: 'Documentos exportados com sucesso!',
+        description: `${documents.length} documento(s) exportado(s) em Excel.`,
+      });
+    } catch (error) {
+      console.error('Erro ao exportar documentos:', error);
+      toast({
+        title: 'Erro ao exportar documentos',
+        description: 'Tente novamente.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const parseCSV = (csvText: string): DocumentImportData[] => {
     // Remover BOM se presente
     const cleanText = csvText.replace(/^\uFEFF/, '');
@@ -667,6 +730,7 @@ export function useDocumentImportExport() {
     exportTemplate,
     exportTemplateExcel,
     exportDocuments,
+    exportDocumentsExcel,
     importDocuments,
     isImporting,
     isExporting,

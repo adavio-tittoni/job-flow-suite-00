@@ -166,6 +166,16 @@ const Users = () => {
     fetchUsers();
   }, []);
 
+  // Recarregar quando a página receber foco (voltar da edição)
+  useEffect(() => {
+    const handleFocus = () => {
+      fetchUsers();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">

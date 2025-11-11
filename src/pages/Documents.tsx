@@ -11,7 +11,7 @@ import { DocumentForm } from "@/components/DocumentForm";
 import { ImportResultsDialog } from "@/components/ImportResultsDialog";
 import { CSVInstructionsDialog } from "@/components/CSVInstructionsDialog";
 import { useDocumentImportExport, ImportResult } from "@/hooks/useDocumentImportExport";
-import { Plus, Search, Edit, Trash2, Download, Upload, FileText, Trash } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Download, Upload, FileText, Trash, Sheet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Documents() {
@@ -28,7 +28,7 @@ export default function Documents() {
   const { data: documents = [], isLoading, refetch } = useDocumentsCatalog();
   const deleteDocument = useDeleteDocument();
   const { toast } = useToast();
-  const { exportTemplate, exportDocuments, importDocuments, isImporting, isExporting } = useDocumentImportExport();
+  const { exportTemplate, exportDocuments, exportDocumentsExcel, importDocuments, isImporting, isExporting } = useDocumentImportExport();
 
   // Filtrar documentos
   const filteredDocuments = documents.filter(doc => {
@@ -117,11 +117,19 @@ export default function Documents() {
 
   const handleExportCSV = async () => {
     try {
-      await exportDocuments();
+      await exportDocuments(filteredDocuments);
+    } catch (error) {
       toast({
-        title: "Exportação concluída",
-        description: "Os documentos foram exportados com sucesso.",
+        title: "Erro na exportação",
+        description: "Ocorreu um erro ao exportar os documentos.",
+        variant: "destructive",
       });
+    }
+  };
+
+  const handleExportExcel = async () => {
+    try {
+      await exportDocumentsExcel(filteredDocuments);
     } catch (error) {
       toast({
         title: "Erro na exportação",
@@ -177,6 +185,10 @@ export default function Documents() {
           <Button variant="outline" onClick={handleExportCSV} disabled={isExporting}>
             <Download className="h-4 w-4 mr-2" />
             {isExporting ? 'Exportando...' : 'Exportar CSV'}
+          </Button>
+          <Button variant="outline" onClick={handleExportExcel} disabled={isExporting}>
+            <Sheet className="h-4 w-4 mr-2" />
+            {isExporting ? 'Exportando...' : 'Exportar Excel'}
           </Button>
           <Button variant="outline" onClick={handleImportCSV} disabled={isImporting}>
             <Upload className="h-4 w-4 mr-2" />

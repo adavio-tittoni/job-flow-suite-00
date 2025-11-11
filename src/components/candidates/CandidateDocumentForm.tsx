@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
-import { Check, ChevronsUpDown, Upload } from "lucide-react";
+import { Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -45,8 +45,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
   const [isComboOpen, setIsComboOpen] = useState(false);
   const [showNewDocDialog, setShowNewDocDialog] = useState(false);
   const [newDocumentData, setNewDocumentData] = useState<{ name: string; group_name: string } | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(
     document?.catalog_document_id || prefilledData?.catalog_document_id || null
   );
@@ -76,7 +74,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       carga_horaria_total: document.carga_horaria_total || undefined,
       carga_horaria_teorica: document.carga_horaria_teorica || undefined,
       carga_horaria_pratica: document.carga_horaria_pratica || undefined,
-      link_validacao: document.link_validacao || "",
       file_url: document.file_url || "",
       arquivo_original: document.arquivo_original || "",
       codigo: document.codigo || "",
@@ -92,7 +89,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       carga_horaria_total: prefilledData.carga_horaria_total || undefined,
       carga_horaria_teorica: prefilledData.carga_horaria_teorica || undefined,
       carga_horaria_pratica: prefilledData.carga_horaria_pratica || undefined,
-      link_validacao: prefilledData.link_validacao || "",
       file_url: prefilledData.file_url || "",
       arquivo_original: prefilledData.arquivo_original || "",
       codigo: prefilledData.codigo || "",
@@ -108,7 +104,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       carga_horaria_total: undefined,
       carga_horaria_teorica: undefined,
       carga_horaria_pratica: undefined,
-      link_validacao: "",
       file_url: "",
       arquivo_original: "",
       codigo: "",
@@ -129,7 +124,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       setValue("carga_horaria_total", document.carga_horaria_total || undefined);
       setValue("carga_horaria_teorica", document.carga_horaria_teorica || undefined);
       setValue("carga_horaria_pratica", document.carga_horaria_pratica || undefined);
-      setValue("link_validacao", document.link_validacao || "");
       setValue("file_url", document.file_url || "");
       setValue("arquivo_original", document.arquivo_original || "");
       setValue("codigo", document.codigo || "");
@@ -240,29 +234,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
     }
   };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-    }
-  };
-
-  const uploadFile = async (file: File): Promise<string | null> => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}.${fileExt}`;
-    const filePath = `${candidateId}/${fileName}`;
-
-    const { error } = await supabase.storage
-      .from('candidate-documents')
-      .upload(filePath, file);
-
-    if (error) {
-      throw error;
-    }
-
-    return filePath;
-  };
-
   const onSubmit = async (data: DocumentFormData) => {
     setIsSubmitting(true);
     try {
@@ -304,12 +275,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
 
       let fileUrl = data.file_url;
 
-      // Upload file if selected
-      if (selectedFile) {
-        setIsUploading(true);
-        fileUrl = await uploadFile(selectedFile);
-      }
-
       // Fix date timezone issues by setting dates at noon UTC
       const formatDateForSave = (dateStr: string) => {
         if (!dateStr) return undefined;
@@ -349,7 +314,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
       });
     } finally {
       setIsSubmitting(false);
-      setIsUploading(false);
     }
   };
 
@@ -564,15 +528,6 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
           </div>
 
           <div>
-            <Label htmlFor="link_validacao">Link de Validação</Label>
-            <Input
-              id="link_validacao"
-              {...register("link_validacao")}
-              placeholder="https://..."
-            />
-          </div>
-
-          <div>
             <Label htmlFor="arquivo_original">Arquivo Original</Label>
             <Input
               id="arquivo_original"
@@ -582,37 +537,9 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
           </div>
         </div>
 
-        {/* Upload do Certificado */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-medium">Upload do Certificado</h3>
-          
-          <div>
-            <Label htmlFor="document_file">Arquivo do Documento</Label>
-            <div className="flex gap-2 items-center">
-              <Input
-                id="document_file"
-                type="file"
-                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                onChange={handleFileSelect}
-                className="flex-1"
-              />
-              {selectedFile && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Upload className="h-4 w-4" />
-                  {selectedFile.name}
-                </div>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              Formatos aceitos: PDF, JPG, PNG, DOC, DOCX
-            </p>
-          </div>
-
-        </div>
-
         <div className="flex gap-4 pt-4">
-          <Button type="submit" disabled={isSubmitting || isUploading}>
-            {isSubmitting || isUploading ? "Salvando..." : document ? "Atualizar" : "Criar"}
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Salvando..." : document ? "Atualizar" : "Criar"}
           </Button>
           <Button type="button" variant="outline" onClick={onCancel}>
             Cancelar

@@ -19,6 +19,8 @@ import MatrixCreator from "./pages/MatrixCreator";
 import MatrixEditor from "./pages/MatrixEditor";
 import Matrix from "./pages/Matrix";
 import Documents from "./pages/Documents";
+import Profile from "./pages/Profile";
+import Help from "./pages/Help";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -43,10 +45,12 @@ const App = () => (
             <Route path="/candidates" element={<ProtectedRoute><Candidates /></ProtectedRoute>} />
             <Route path="/candidates/:id" element={<ProtectedRoute><CandidateDetail /></ProtectedRoute>} />
             <Route path="/candidates/:id/import-documents" element={<ProtectedRoute><ImportDocuments /></ProtectedRoute>} />
-            <Route path="/matrix" element={<ProtectedRoute><Matrix /></ProtectedRoute>} />
-            <Route path="/matrix/new" element={<ProtectedRoute><MatrixCreator /></ProtectedRoute>} />
-            <Route path="/matrix/:id" element={<ProtectedRoute><MatrixEditor /></ProtectedRoute>} />
-            <Route path="/documents" element={<ProtectedRoute><Documents /></ProtectedRoute>} />
+            <Route path="/matrix" element={<AdminRoute><Matrix /></AdminRoute>} />
+            <Route path="/matrix/new" element={<AdminRoute><MatrixCreator /></AdminRoute>} />
+            <Route path="/matrix/:id" element={<AdminRoute><MatrixEditor /></AdminRoute>} />
+            <Route path="/documents" element={<AdminRoute><Documents /></AdminRoute>} />
+            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="/help" element={<ProtectedRoute><Help /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>

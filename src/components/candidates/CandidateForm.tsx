@@ -18,9 +18,7 @@ const candidateSchema = z.object({
   email: z.string().email("Email inválido").optional().or(z.literal("")),
   phones: z.string().optional(),
   cpf: z.string().optional(),
-  role_title: z.string().optional(),
   linkedin_url: z.string().optional(),
-  working_status: z.string().optional(),
   matrix_id: z.string().optional().or(z.undefined()),
   blacklisted: z.boolean().default(false),
   address_street: z.string().optional(),
@@ -47,6 +45,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedVacancyId, setSelectedVacancyId] = useState<string | undefined>(undefined);
 
   // Fetch vacancies for selection
   const { data: vacancies = [] } = useQuery({
@@ -75,9 +74,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
       email: candidate?.email || "",
       phones: candidate?.phones || "",
       cpf: candidate?.cpf || "",
-      role_title: candidate?.role_title || "",
       linkedin_url: candidate?.linkedin_url || "",
-      working_status: candidate?.working_status || "",
       matrix_id: candidate?.matrix_id || undefined,
       blacklisted: candidate?.blacklisted || false,
       address_street: candidate?.address_street || "",
@@ -102,6 +99,17 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
   const onSubmit = async (data: CandidateFormData) => {
     setIsSubmitting(true);
     try {
+      // Validação: ao criar novo candidato, é obrigatório selecionar uma vaga
+      if (!candidate && !selectedVacancyId) {
+        toast({
+          title: "Vaga obrigatória",
+          description: "É necessário selecionar uma vaga para criar o candidato.",
+          variant: "destructive",
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
       console.log('📝 CandidateForm: Submitting data:', data);
       
       const normalizedData = {
@@ -126,7 +134,28 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
         queryClient.invalidateQueries({ queryKey: ["vacancy-candidate-comparison"] });
       } else {
         console.log('📝 CandidateForm: Creating new candidate');
-        await createCandidate.mutateAsync(normalizedData);
+        const newCandidate = await createCandidate.mutateAsync(normalizedData);
+        
+        // Após criar o candidato, vincular à vaga selecionada
+        if (selectedVacancyId && newCandidate?.id) {
+          const { error: linkError } = await supabase
+            .from('vacancy_candidates')
+            .insert({
+              vacancy_id: selectedVacancyId,
+              candidate_id: newCandidate.id,
+            });
+          
+          if (linkError) {
+            console.error('Erro ao vincular candidato à vaga:', linkError);
+            toast({
+              title: "Aviso",
+              description: "Candidato criado, mas houve erro ao vincular à vaga. Você pode vincular manualmente depois.",
+              variant: "destructive",
+            });
+          } else {
+            console.log('✅ Candidato vinculado à vaga com sucesso');
+          }
+        }
       }
       onSuccess();
     } catch (error) {
@@ -147,7 +176,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="name">Nome *</Label>
+          <Label htmlFor="name">Nome Completo (conforme o documento) *</Label>
           <Input
             id="name"
             {...register("name")}
@@ -155,6 +184,51 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
           />
           {errors.name && (
             <p className="text-sm text-destructive">{errors.name.message}</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="matrix_id">
+            Vaga a ser concorrida {!candidate && <span className="text-destructive">*</span>}
+          </Label>
+          <Select 
+            value={(() => {
+              if (candidate) {
+                // Find the vacancy that has the same matrix_id as the candidate
+                const currentVacancy = vacancies.find(v => v.matrix_id === candidate?.matrix_id);
+                return currentVacancy?.id || undefined;
+              }
+              return selectedVacancyId || undefined;
+            })()} 
+            onValueChange={(value) => {
+              console.log('📝 CandidateForm: Vacancy selected:', value);
+              setSelectedVacancyId(value);
+              // Find the vacancy and get its matrix_id
+              const selectedVacancy = vacancies.find(v => v.id === value);
+              console.log('📝 CandidateForm: Selected vacancy:', selectedVacancy);
+              if (selectedVacancy) {
+                console.log('📝 CandidateForm: Setting matrix_id to:', selectedVacancy.matrix_id);
+                setValue("matrix_id", selectedVacancy.matrix_id || undefined);
+              } else {
+                console.log('📝 CandidateForm: No vacancy found, setting matrix_id to undefined');
+                setValue("matrix_id", undefined);
+                setSelectedVacancyId(undefined);
+              }
+            }}
+          >
+            <SelectTrigger className={!candidate && !selectedVacancyId ? "border-destructive" : ""}>
+              <SelectValue placeholder="Selecione uma vaga..." />
+            </SelectTrigger>
+            <SelectContent>
+              {vacancies.map((vacancy) => (
+                <SelectItem key={vacancy.id} value={vacancy.id}>
+                  {vacancy.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!candidate && !selectedVacancyId && (
+            <p className="text-sm text-destructive">É obrigatório selecionar uma vaga para criar o candidato.</p>
           )}
         </div>
 
@@ -190,73 +264,12 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="role_title">Cargo Desejado</Label>
-          <Input
-            id="role_title"
-            {...register("role_title")}
-            placeholder="Cargo pretendido"
-          />
-        </div>
-
-        <div className="space-y-2">
           <Label htmlFor="linkedin_url">LinkedIn</Label>
           <Input
             id="linkedin_url"
             {...register("linkedin_url")}
             placeholder="linkedin.com/in/usuario"
           />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="working_status">Status de Trabalho</Label>
-          <Select onValueChange={(value) => setValue("working_status", value)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Selecione o status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Trabalhando">Trabalhando</SelectItem>
-              <SelectItem value="Disponível">Disponível</SelectItem>
-              <SelectItem value="Não disponível">Não disponível</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="matrix_id">Vaga a ser concorrida</Label>
-          <Select 
-            value={(() => {
-              // Find the vacancy that has the same matrix_id as the candidate
-              const currentVacancy = vacancies.find(v => v.matrix_id === candidate?.matrix_id);
-              console.log('📝 CandidateForm: Current candidate matrix_id:', candidate?.matrix_id);
-              console.log('📝 CandidateForm: Available vacancies:', vacancies);
-              console.log('📝 CandidateForm: Found vacancy:', currentVacancy);
-              return currentVacancy?.id || undefined;
-            })()} 
-            onValueChange={(value) => {
-              console.log('📝 CandidateForm: Vacancy selected:', value);
-              // Find the vacancy and get its matrix_id
-              const selectedVacancy = vacancies.find(v => v.id === value);
-              console.log('📝 CandidateForm: Selected vacancy:', selectedVacancy);
-              if (selectedVacancy) {
-                console.log('📝 CandidateForm: Setting matrix_id to:', selectedVacancy.matrix_id);
-                setValue("matrix_id", selectedVacancy.matrix_id || undefined);
-              } else {
-                console.log('📝 CandidateForm: No vacancy found, setting matrix_id to undefined');
-                setValue("matrix_id", undefined);
-              }
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Selecione uma vaga..." />
-            </SelectTrigger>
-            <SelectContent>
-              {vacancies.map((vacancy) => (
-                <SelectItem key={vacancy.id} value={vacancy.id}>
-                  {vacancy.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 

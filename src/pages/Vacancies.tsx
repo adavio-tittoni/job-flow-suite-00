@@ -200,9 +200,7 @@ const Vacancies = () => {
                   </TableHead>
                   <TableHead className="font-semibold text-gray-700">Título</TableHead>
                   <TableHead className="font-semibold text-gray-700">Empresa</TableHead>
-                  <TableHead className="font-semibold text-gray-700">Departamento</TableHead>
                   <TableHead className="font-semibold text-gray-700">Localização</TableHead>
-                  <TableHead className="font-semibold text-gray-700">Tipo</TableHead>
                   <TableHead className="font-semibold text-gray-700">Status</TableHead>
                   <TableHead className="font-semibold text-gray-700">Candidatos</TableHead>
                   <TableHead className="font-semibold text-gray-700">Salário</TableHead>
@@ -228,7 +226,6 @@ const Vacancies = () => {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell>{vacancy.department || "-"}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <MapPin className="h-4 w-4 text-gray-400" />
@@ -237,7 +234,6 @@ const Vacancies = () => {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell>{vacancy.employment_type || "-"}</TableCell>
                     <TableCell>
                       <Badge 
                         variant={vacancy.status === 'open' ? 'default' : 'secondary'}

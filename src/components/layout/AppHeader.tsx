@@ -12,9 +12,9 @@ export function AppHeader() {
         
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-lg">M</span>
+            <span className="text-primary-foreground font-bold text-lg">C</span>
           </div>
-          <h1 className="font-bold text-xl hidden sm:block">MHLC Certificações</h1>
+          <h1 className="font-bold text-xl hidden sm:block">CertifAi</h1>
         </div>
       </div>
 
