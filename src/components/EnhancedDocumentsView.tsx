@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -14,13 +14,17 @@ interface EnhancedDocumentsViewProps {
   matrixId: string | null;
   onAddDocument?: (catalogDocId: string) => void;
   onViewDocument?: (documentId: string) => void;
+  onExportPending?: () => void;
+  onCopyLink?: () => void;
 }
 
 export const EnhancedDocumentsView = ({ 
   candidateId, 
   matrixId,
   onAddDocument, 
-  onViewDocument 
+  onViewDocument,
+  onExportPending,
+  onCopyLink
 }: EnhancedDocumentsViewProps) => {
   const [activeTab, setActiveTab] = useState('all');
 
@@ -325,16 +329,30 @@ export const EnhancedDocumentsView = ({
                 📋 Análise completa de conformidade com dados do catálogo de documentos
               </p>
             </div>
-            <div className="text-right">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                disabled={loading}
-                className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Exportar Pendentes
-              </Button>
+            <div className="text-right flex gap-2">
+              {onCopyLink && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={onCopyLink}
+                  className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copiar Link
+                </Button>
+              )}
+              {onExportPending && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  disabled={loading}
+                  onClick={onExportPending}
+                  className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar Pendentes
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>

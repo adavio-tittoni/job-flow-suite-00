@@ -201,11 +201,73 @@ export const useCandidateDocuments = (candidateId: string) => {
 
       if (error) throw error;
       
+      // Helper function to normalize file_url to relative path
+      const normalizeFileUrl = (fileUrl: string | null | undefined): string | null => {
+        if (!fileUrl) return null;
+        
+        // If it's already a relative path, return as is
+        if (!fileUrl.includes('http://') && !fileUrl.includes('https://') && !fileUrl.includes('supabase.co')) {
+          return fileUrl;
+        }
+        
+        // Remove query parameters before parsing
+        const urlWithoutQuery = fileUrl.split('?')[0];
+        
+        try {
+          const url = new URL(urlWithoutQuery);
+          const pathParts = url.pathname.split('/').filter(part => part !== '');
+          
+          // Find 'candidate-documents' in the path
+          const bucketIndex = pathParts.findIndex(part => part === 'candidate-documents');
+          if (bucketIndex !== -1 && bucketIndex + 1 < pathParts.length) {
+            return pathParts.slice(bucketIndex + 1).join('/');
+          }
+          
+          // Alternative: /object/public/candidate-documents/... or /object/sign/candidate-documents/...
+          const objectIndex = pathParts.findIndex(part => part === 'object');
+          if (objectIndex !== -1) {
+            const publicOrSignIndex = pathParts.findIndex((part, idx) => 
+              idx > objectIndex && (part === 'public' || part === 'sign')
+            );
+            if (publicOrSignIndex !== -1) {
+              const bucketIndexAfter = pathParts.findIndex((part, idx) => 
+                idx > publicOrSignIndex && part === 'candidate-documents'
+              );
+              if (bucketIndexAfter !== -1 && bucketIndexAfter + 1 < pathParts.length) {
+                return pathParts.slice(bucketIndexAfter + 1).join('/');
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Failed to normalize file_url:', fileUrl, e);
+        }
+        
+        // Fallback: try regex
+        const match = urlWithoutQuery.match(/candidate-documents\/(.+)$/);
+        if (match && match[1]) {
+          return match[1];
+        }
+        
+        return fileUrl; // Return original if can't normalize
+      };
+      
       // Transform the data to flatten the categoria from catalog, but keep original sigla_documento, codigo and tipo_de_codigo
       const transformedData = data?.map(doc => {
         console.log('Processing document:', doc.document_name, 'catalog:', doc.documents_catalog);
+        
+        // Normalize file_url to ensure it's always a relative path
+        const normalizedFileUrl = normalizeFileUrl(doc.file_url);
+        if (normalizedFileUrl !== doc.file_url) {
+          console.log('📝 Normalizando file_url do documento:', {
+            id: doc.id,
+            original: doc.file_url,
+            normalized: normalizedFileUrl
+          });
+        }
+        
         return {
           ...doc,
+          file_url: normalizedFileUrl, // Use normalized path
           document_category: doc.documents_catalog?.categoria || doc.document_category || null,
           // Manter sigla_documento, codigo e tipo_de_codigo originais do documento do candidato
           sigla_documento: doc.sigla_documento || doc.documents_catalog?.sigla_documento || null,

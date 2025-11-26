@@ -8,12 +8,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, X, User, CheckIcon, Loader2 } from "lucide-react";
+import { Plus, X, User, CheckIcon, Loader2, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
 import { useAuth } from "@/hooks/useAuth";
 import CandidateMatrixComparison from "./CandidateMatrixComparison";
+import * as XLSX from "xlsx";
 
 interface VacancyCandidate {
   id: string;
@@ -49,12 +50,25 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
   const [loading, setLoading] = useState(true);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateToRemove, setCandidateToRemove] = useState<VacancyCandidate | null>(null);
+  const [vacancyTitle, setVacancyTitle] = useState<string>("");
   
   // Buscar comparações para ordenar os cards
-  const { comparisons } = useVacancyCandidateComparison(vacancyId);
+  const { comparisons, loading: comparisonsLoading } = useVacancyCandidateComparison(vacancyId);
 
   const fetchVacancyCandidates = async () => {
     try {
+      // Buscar título da vaga
+      const { data: vacancyData, error: vacancyError } = await supabase
+        .from('vacancies')
+        .select('title')
+        .eq('id', vacancyId)
+        .single();
+
+      if (vacancyError) throw vacancyError;
+      if (vacancyData) {
+        setVacancyTitle(vacancyData.title || "");
+      }
+
       const { data, error } = await supabase
         .from('vacancy_candidates')
         .select(`
@@ -216,6 +230,87 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
     return notes.length > 100 ? notes.substring(0, 100) + "..." : notes;
   };
 
+  const exportToExcel = () => {
+    try {
+      if (vacancyCandidates.length === 0) {
+        toast({
+          title: "Aviso",
+          description: "Não há candidatos para exportar.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Criar workbook
+      const workbook = XLSX.utils.book_new();
+
+      // Preparar dados para exportação - Resumo simples: uma linha por candidato
+      const exportData: any[] = [];
+
+      // Se houver comparações, usar os dados das comparações
+      if (comparisons.length > 0) {
+        comparisons.forEach((comparison) => {
+          exportData.push({
+            "Nome da Vaga": vacancyTitle,
+            "Nome do Candidato": comparison.candidateName,
+            "Aderência (%)": comparison.adherencePercentage,
+            "Confere": comparison.metRequirements,
+            "Parcial": comparison.partialRequirements,
+            "Pendente": comparison.pendingRequirements,
+          });
+        });
+      } else {
+        // Se não houver comparações, exportar apenas dados básicos dos candidatos
+        vacancyCandidates.forEach((vacancyCandidate) => {
+          exportData.push({
+            "Nome da Vaga": vacancyTitle,
+            "Nome do Candidato": vacancyCandidate.candidate.name,
+            "Aderência (%)": "-",
+            "Confere": "-",
+            "Parcial": "-",
+            "Pendente": "-",
+          });
+        });
+      }
+
+      // Criar worksheet
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+      // Ajustar largura das colunas
+      const columnWidths = [
+        { wch: 30 }, // Nome da Vaga
+        { wch: 35 }, // Nome do Candidato
+        { wch: 15 }, // Aderência
+        { wch: 12 }, // Confere
+        { wch: 12 }, // Parcial
+        { wch: 12 }, // Pendente
+      ];
+      worksheet['!cols'] = columnWidths;
+
+      // Adicionar worksheet ao workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Candidatos");
+
+      // Gerar nome do arquivo com data
+      const date = new Date().toISOString().split('T')[0];
+      const fileName = `Candidatos_${vacancyTitle.replace(/[^a-z0-9]/gi, '_')}_${date}.xlsx`;
+
+      // Salvar arquivo
+      XLSX.writeFile(workbook, fileName);
+
+      toast({
+        title: "Sucesso",
+        description: "Dados exportados para Excel com sucesso!",
+      });
+    } catch (error) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível exportar os dados para Excel.",
+        variant: "destructive",
+      });
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -238,13 +333,34 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
           )}
         </div>
 
-        <Popover open={showAddCandidate} onOpenChange={setShowAddCandidate}>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Plus className="mr-2 h-4 w-4" />
-              Adicionar candidato
+        <div className="flex items-center gap-2">
+          {vacancyCandidates.length > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={exportToExcel}
+              disabled={comparisonsLoading}
+            >
+              {comparisonsLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Carregando...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Exportar Excel
+                </>
+              )}
             </Button>
-          </PopoverTrigger>
+          )}
+          <Popover open={showAddCandidate} onOpenChange={setShowAddCandidate}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Adicionar candidato
+              </Button>
+            </PopoverTrigger>
           <PopoverContent className="w-80 p-0">
             <Command>
               <CommandInput placeholder="Buscar candidatos..." />
@@ -277,6 +393,7 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
             </Command>
           </PopoverContent>
         </Popover>
+        </div>
       </div>
 
       {vacancyCandidates.length === 0 ? (
