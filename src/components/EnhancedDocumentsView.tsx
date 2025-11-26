@@ -5,13 +5,17 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy, FileDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
+import * as XLSX from 'xlsx';
+import { useToast } from '@/hooks/use-toast';
+import { format } from 'date-fns';
 
 interface EnhancedDocumentsViewProps {
   candidateId: string;
   matrixId: string | null;
+  candidateName?: string;
   onAddDocument?: (catalogDocId: string) => void;
   onViewDocument?: (documentId: string) => void;
   onExportPending?: () => void;
@@ -21,12 +25,14 @@ interface EnhancedDocumentsViewProps {
 export const EnhancedDocumentsView = ({ 
   candidateId, 
   matrixId,
+  candidateName,
   onAddDocument, 
   onViewDocument,
   onExportPending,
   onCopyLink
 }: EnhancedDocumentsViewProps) => {
   const [activeTab, setActiveTab] = useState('all');
+  const { toast } = useToast();
 
   // Buscar TODOS os itens da matriz e suas comparações (LEFT JOIN)
   const { data: allMatrixItems, isLoading: loading, error } = useQuery({
@@ -300,6 +306,161 @@ export const EnhancedDocumentsView = ({
     }
   });
 
+  const handleExportToExcel = async () => {
+    try {
+      if (!documents || documents.length === 0) {
+        toast({
+          title: "Nenhum documento",
+          description: "Não há documentos para exportar.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const vacancyName = vacancy?.title || 'N/A';
+      const candidateNameValue = candidateName || 'N/A';
+
+      // Buscar documentos do candidato para obter file_url
+      const candidateDocumentIds = documents
+        .filter(doc => doc.candidateDocumentId)
+        .map(doc => doc.candidateDocumentId);
+      
+      let documentFileUrls: Record<string, string> = {};
+      if (candidateDocumentIds.length > 0) {
+        const { data: candidateDocs, error: docsError } = await supabase
+          .from('candidate_documents')
+          .select('id, file_url')
+          .in('id', candidateDocumentIds);
+        
+        if (!docsError && candidateDocs) {
+          candidateDocs.forEach(cd => {
+            if (cd.file_url) {
+              documentFileUrls[cd.id] = cd.file_url;
+            }
+          });
+        }
+      }
+
+      // Preparar dados para exportação (sem Nome da Vaga e Nome do Candidato em cada linha)
+      const excelData = documents.map(doc => {
+        // Formatar data de validade
+        let validade = 'N/A';
+        if (doc.validityDate && doc.validityDate !== 'null' && doc.validityDate !== 'undefined') {
+          try {
+            const date = new Date(doc.validityDate);
+            if (!isNaN(date.getTime())) {
+              validade = format(date, 'dd/MM/yyyy');
+            }
+          } catch {
+            validade = 'N/A';
+          }
+        }
+
+        // Formatar status
+        let statusText = 'N/A';
+        switch (doc.status) {
+          case 'CONFERE':
+            statusText = 'Confere';
+            break;
+          case 'PARCIAL':
+            statusText = 'Parcial';
+            break;
+          case 'PENDENTE':
+            statusText = 'Pendente';
+            break;
+          default:
+            statusText = 'N/A';
+        }
+
+        // Gerar URL de download do arquivo se existir
+        let downloadUrl = '';
+        if (doc.candidateDocumentId) {
+          const fileUrl = documentFileUrls[doc.candidateDocumentId];
+          if (fileUrl) {
+            // Construir URL para visualizar/baixar o documento no sistema
+            const baseUrl = window.location.origin;
+            downloadUrl = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.candidateDocumentId}`;
+          } else {
+            // Se não houver file_url, ainda criar URL para a página do documento
+            const baseUrl = window.location.origin;
+            downloadUrl = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.candidateDocumentId}`;
+          }
+        }
+
+        return {
+          'Categoria': doc.category || '-',
+          'Sigla': doc.sigla || '-',
+          'Documento': doc.documentName || '-',
+          'Código': doc.documentCode || '-',
+          'Obrigatoriedade': doc.obligation || '-',
+          'Horas': doc.requiredHours > 0 ? `${doc.requiredHours}h` : '-',
+          'Modalidade': doc.modality || '-',
+          'Status': statusText,
+          'Validade': validade,
+          'URL Download': downloadUrl
+        };
+      });
+
+      // Criar workbook
+      const workbook = XLSX.utils.book_new();
+
+      // Criar cabeçalho com informações do candidato e vaga
+      const headerInfo = [
+        ['Nome da Vaga', vacancyName],
+        ['Nome do Candidato', candidateNameValue],
+        [], // Linha vazia
+      ];
+
+      // Criar worksheet começando com o cabeçalho
+      const worksheet = XLSX.utils.aoa_to_sheet(headerInfo);
+
+      // Adicionar dados começando na linha 4 (após o cabeçalho)
+      XLSX.utils.sheet_add_json(worksheet, excelData, { 
+        origin: 'A4', 
+        skipHeader: false 
+      });
+
+      // Ajustar larguras das colunas
+      const colWidths = [
+        { wch: 15 }, // Categoria
+        { wch: 12 }, // Sigla
+        { wch: 40 }, // Documento
+        { wch: 20 }, // Código
+        { wch: 18 }, // Obrigatoriedade
+        { wch: 10 }, // Horas
+        { wch: 15 }, // Modalidade
+        { wch: 12 }, // Status
+        { wch: 15 }, // Validade
+        { wch: 60 }, // URL Download
+      ];
+      worksheet['!cols'] = colWidths;
+
+      // Adicionar worksheet ao workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Documentos Matriz');
+
+      // Gerar nome do arquivo
+      const timestamp = new Date().getTime();
+      const safeCandidateName = candidateNameValue.replace(/[^a-zA-Z0-9]/g, '_');
+      const safeVacancyName = vacancyName.replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `documentos_matriz_${safeVacancyName}_${safeCandidateName}_${timestamp}.xlsx`;
+
+      // Baixar arquivo
+      XLSX.writeFile(workbook, fileName);
+
+      toast({
+        title: "Exportação concluída",
+        description: `${documents.length} documento(s) exportado(s) em Excel com sucesso.`,
+      });
+    } catch (error: any) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast({
+        title: "Erro ao exportar",
+        description: error.message || "Não foi possível exportar os documentos.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Enhanced Header Section */}
@@ -330,6 +491,16 @@ export const EnhancedDocumentsView = ({
               </p>
             </div>
             <div className="text-right flex gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                disabled={loading || !documents || documents.length === 0}
+                onClick={handleExportToExcel}
+                className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
+              >
+                <FileDown className="h-4 w-4 mr-2" />
+                Exportar Excel
+              </Button>
               {onCopyLink && (
                 <Button 
                   variant="outline" 

@@ -812,6 +812,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       <EnhancedDocumentsView 
         candidateId={candidateId}
         matrixId={candidateMatrixId}
+        candidateName={candidateName}
         onAddDocument={(catalogDocId) => {
           // Buscar dados do documento do catálogo para preencher o formulário
           supabase
