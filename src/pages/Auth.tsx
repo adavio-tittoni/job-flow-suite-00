@@ -58,11 +58,14 @@ export default function Auth() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-3xl">C</span>
+            <div className="w-20">
+              <img 
+                src="/Capturar.PNG" 
+                alt="Logo" 
+                className="w-full h-auto object-contain"
+              />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold">CertifAi</CardTitle>
           <CardDescription>Sistema de Gestão de Recrutamento</CardDescription>
         </CardHeader>
         <CardContent>

@@ -49,9 +49,16 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
             modalidade,
             regra_validade,
             documents_catalog!inner (
+              id,
               name,
+              nome_curso,
+              codigo,
+              sigla,
+              sigla_documento,
               document_category,
-              document_type
+              document_type,
+              categoria,
+              group_name
             )
           `)
           .eq('matrix_id', matrixId);

@@ -29,6 +29,7 @@ export interface Candidate {
   cs_responsible_id?: string;
   notes?: string;
   matrix_id?: string;
+  vacancy_title?: string; // Nome da vaga vinculada ao candidato
 }
 
 export interface CandidateDocument {
@@ -78,13 +79,60 @@ export const useCandidates = () => {
   const { data: candidates = [], isLoading } = useQuery({
     queryKey: ["candidates"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Buscar candidatos
+      const { data: candidatesData, error: candidatesError } = await supabase
         .from("candidates")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      return data as Candidate[];
+      if (candidatesError) throw candidatesError;
+
+      // Buscar vagas vinculadas aos candidatos
+      const candidateIds = candidatesData?.map(c => c.id) || [];
+      
+      if (candidateIds.length > 0) {
+        const { data: vacancyCandidates, error: vcError } = await supabase
+          .from("vacancy_candidates")
+          .select(`
+            candidate_id,
+            vacancies (
+              id,
+              title
+            )
+          `)
+          .in("candidate_id", candidateIds);
+
+        if (vcError) {
+          console.warn("Erro ao buscar vagas vinculadas:", vcError);
+        } else {
+          // Criar um mapa de candidate_id -> vacancy_title
+          const vacancyMap = new Map<string, string>();
+          vacancyCandidates?.forEach((vc: any) => {
+            // O Supabase pode retornar como array ou objeto único
+            const vacancies = Array.isArray(vc.vacancies) ? vc.vacancies : (vc.vacancies ? [vc.vacancies] : []);
+            
+            vacancies.forEach((vacancy: any) => {
+              if (vacancy && vacancy.title) {
+                // Se o candidato já tem uma vaga, concatenar com vírgula
+                const existing = vacancyMap.get(vc.candidate_id);
+                if (existing) {
+                  vacancyMap.set(vc.candidate_id, `${existing}, ${vacancy.title}`);
+                } else {
+                  vacancyMap.set(vc.candidate_id, vacancy.title);
+                }
+              }
+            });
+          });
+
+          // Adicionar vacancy_title aos candidatos
+          return candidatesData?.map(candidate => ({
+            ...candidate,
+            vacancy_title: vacancyMap.get(candidate.id) || undefined
+          })) as Candidate[];
+        }
+      }
+
+      return candidatesData as Candidate[];
     },
   });
 

@@ -51,8 +51,11 @@ export const EnhancedDocumentsView = ({
           modalidade,
           carga_horaria,
           documents_catalog (
+            id,
             name,
+            nome_curso,
             codigo,
+            sigla,
             sigla_documento,
             document_category,
             categoria,
@@ -191,9 +194,18 @@ export const EnhancedDocumentsView = ({
     // SEMPRE priorizar documents_catalog para informações do documento
     // comparison contém apenas status e observações da comparação
     
+    // Usar nome_curso se disponível, senão usar name (compatibilidade com documentos antigos e novos)
+    const documentName = docCatalog?.nome_curso || docCatalog?.name || 'Nome não disponível';
+    // Usar sigla_documento se disponível, senão usar sigla (compatibilidade com documentos antigos e novos)
+    const documentSigla = docCatalog?.sigla_documento || docCatalog?.sigla || '';
+    
     console.log('📄 Processando documento:', {
-      documentName: docCatalog?.name,
-      sigla: docCatalog?.sigla_documento,
+      documentName,
+      sigla: documentSigla,
+      nome_curso: docCatalog?.nome_curso,
+      name: docCatalog?.name,
+      sigla_documento: docCatalog?.sigla_documento,
+      sigla: docCatalog?.sigla,
       statusFinal: status,
       hasComparison: !!comparison,
       comparisonStatus: comparison?.status
@@ -201,10 +213,10 @@ export const EnhancedDocumentsView = ({
     
     return {
       id: matrixItem.id,
-      documentName: docCatalog?.name || 'Nome não disponível',
+      documentName,
       documentCode: docCatalog?.codigo || '',
       category: docCatalog?.document_category || docCatalog?.categoria || '',
-      sigla: docCatalog?.sigla_documento || '', // SEMPRE da documents_catalog
+      sigla: documentSigla, // SEMPRE da documents_catalog
       obligation: matrixItem.obrigatoriedade || 'Obrigatório',
       requiredHours: matrixItem.carga_horaria || 0,
       modality: matrixItem.modalidade || '',

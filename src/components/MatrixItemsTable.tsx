@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Trash2, Edit, Save, X, Search, Filter } from "lucide-react";
+import { Plus, Trash2, Edit, Save, X, Search, Filter, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMatrixItems, useCreateMatrixItem, useUpdateMatrixItem, useDeleteMatrixItem, type MatrixItem } from "@/hooks/useMatrix";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -147,7 +148,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
         });
       } else {
         // Create new item
-        const selectedDoc = documents.find(d => d.id === data.document_id);
+        // Não incluir 'document' pois é apenas uma relação virtual, não uma coluna da tabela
         await createMatrixItem.mutateAsync({
           matrix_id: matrixId,
           document_id: data.document_id,
@@ -155,11 +156,6 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
           carga_horaria: data.carga_horaria,
           modalidade: data.modalidade,
           regra_validade: data.regra_validade,
-          document: {
-            id: data.document_id,
-            name: selectedDoc?.nome_curso || selectedDoc?.name || "",
-            categoria: selectedDoc?.categoria || "",
-          }
         });
         
         toast({
@@ -235,25 +231,111 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
     setEditingItem(null);
   };
 
-  const handleAddDocument = async (documentId: string) => {
-    // Definir o documento selecionado
-    setValue("document_id", documentId);
+  // Função para converter validade do catálogo para formato do matrix_item
+  const convertValidadeToRegraValidade = (validade: string | null | undefined): string => {
+    if (!validade) return "Sem validade";
     
-    // Criar o item automaticamente com valores padrão
+    const validadeLower = validade.toLowerCase().trim();
+    
+    // Se já está no formato "Válido por X anos", retornar como está
+    if (validadeLower.includes("válido por")) {
+      return validade;
+    }
+    
+    // Extrair número de anos
+    const anosMatch = validadeLower.match(/(\d+)\s*ano/i);
+    if (anosMatch) {
+      const anos = anosMatch[1];
+      return `Válido por ${anos} ano${parseInt(anos) > 1 ? 's' : ''}`;
+    }
+    
+    // Extrair número de meses
+    const mesesMatch = validadeLower.match(/(\d+)\s*m[eê]s/i);
+    if (mesesMatch) {
+      const meses = mesesMatch[1];
+      return `Válido por ${meses} mês${parseInt(meses) > 1 ? 'es' : ''}`;
+    }
+    
+    // Se não conseguir converter, retornar como está ou "Sem validade"
+    return validade || "Sem validade";
+  };
+
+  // Função para converter carga_horaria de texto para número
+  const convertCargaHorariaToNumber = (cargaHoraria: string | null | undefined): number | undefined => {
+    if (!cargaHoraria) return undefined;
+    
+    // Remover "h" ou "horas" e espaços, depois converter para número
+    const cleaned = cargaHoraria.toString().replace(/[hhoras\s]/gi, '').trim();
+    const parsed = parseInt(cleaned);
+    
+    return isNaN(parsed) ? undefined : parsed;
+  };
+
+  const handleAddDocument = async (documentId: string) => {
+    // Buscar dados completos do documento do catálogo
     setIsSubmitting(true);
     try {
+      // Buscar documento com campos básicos que sabemos que existem
+      const { data: documentData, error: docError } = await supabase
+        .from('documents_catalog')
+        .select('modality')
+        .eq('id', documentId)
+        .single();
+
+      if (docError && docError.code !== 'PGRST116') { // PGRST116 = no rows returned
+        console.error('Erro ao buscar dados do catálogo:', docError);
+      }
+
+      // Tentar buscar campos opcionais usando uma query raw SQL ou verificar se existem
+      // Por enquanto, vamos usar valores padrão e permitir edição posterior
+      let cargaHorariaCatalog: string | null = null;
+      let validadeCatalog: string | null = null;
+      
+      // Tentar buscar campos opcionais - se não existirem, usar null
+      try {
+        // Usar uma query que não falha se os campos não existirem
+        const { data: fullDoc } = await supabase
+          .from('documents_catalog')
+          .select('*')
+          .eq('id', documentId)
+          .single();
+        
+        // Verificar se os campos existem no objeto retornado
+        if (fullDoc) {
+          cargaHorariaCatalog = (fullDoc as any).carga_horaria || null;
+          validadeCatalog = (fullDoc as any).validade || null;
+        }
+      } catch (e) {
+        // Campos opcionais podem não existir, usar valores padrão
+        console.log('Campos opcionais não encontrados, usando valores padrão');
+      }
+
+      // Extrair e converter os dados do catálogo
+      const modalidadeCatalog = documentData?.modality || null;
+
+      // Converter carga_horaria de texto para número
+      const cargaHorariaNumber = convertCargaHorariaToNumber(cargaHorariaCatalog);
+      
+      // Converter validade para formato esperado
+      const regraValidade = convertValidadeToRegraValidade(validadeCatalog);
+      
+      // Usar modalidade do catálogo ou padrão
+      const modalidade = modalidadeCatalog || "Presencial";
+
+      // Criar o item com os dados do catálogo
+      // Não incluir 'document' pois é apenas uma relação virtual, não uma coluna da tabela
       await createMatrixItem.mutateAsync({
         matrix_id: matrixId,
         document_id: documentId,
         obrigatoriedade: "Obrigatório",
-        carga_horaria: undefined,
-        modalidade: "Presencial",
-        regra_validade: "Sem validade",
+        carga_horaria: cargaHorariaNumber,
+        modalidade: modalidade,
+        regra_validade: regraValidade,
       });
       
       toast({
         title: "Documento adicionado",
-        description: "O documento foi adicionado à matriz com sucesso.",
+        description: "O documento foi adicionado à matriz com sucesso. Dados do catálogo foram preenchidos automaticamente.",
       });
       
       // Fechar o seletor e atualizar a lista
@@ -421,7 +503,14 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
           )}
 
           {/* Form for editing item */}
-          {editingItem && (
+          {editingItem && (() => {
+            const doc = documents.find(d => d.id === editingItem.document_id);
+            // Buscar campos opcionais do documento (podem não existir)
+            const catalogCargaHoraria = doc ? (doc as any)?.carga_horaria : null;
+            const catalogValidade = doc ? (doc as any)?.validade : null;
+            const catalogModalidade = doc ? ((doc as any)?.modalidade || (doc as any)?.modality) : null;
+            
+            return (
             <Card className="mb-6 border-green-200 bg-green-50">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
@@ -438,10 +527,68 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                 </div>
               </CardHeader>
               <CardContent>
+                {/* Mostrar dados originais do catálogo como referência */}
+                {(catalogCargaHoraria || catalogValidade || catalogModalidade) && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-xs font-semibold text-blue-900 mb-2">📚 Dados originais do catálogo (referência):</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                      {catalogCargaHoraria && (
+                        <div>
+                          <span className="font-medium text-blue-700">Carga Horária: </span>
+                          <span className="text-blue-900">{catalogCargaHoraria}</span>
+                        </div>
+                      )}
+                      {catalogValidade && (
+                        <div>
+                          <span className="font-medium text-blue-700">Validade: </span>
+                          <span className="text-blue-900">{catalogValidade}</span>
+                        </div>
+                      )}
+                      {catalogModalidade && (
+                        <div>
+                          <span className="font-medium text-blue-700">Modalidade: </span>
+                          <span className="text-blue-900">{catalogModalidade}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="space-y-2">
-                      <Label>Obrigatoriedade</Label>
+                      <div className="flex items-center gap-2">
+                        <Label>Obrigatoriedade</Label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-4 w-4 text-muted-foreground cursor-help hover:text-foreground transition-colors" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-md p-4">
+                              <div className="space-y-3 text-xs">
+                                <p className="font-semibold text-sm mb-2">Legendas de Obrigatoriedade:</p>
+                                <div className="space-y-2">
+                                  <div>
+                                    <p className="font-semibold text-red-600">1. Eliminatório</p>
+                                    <p className="text-muted-foreground">Critério que desclassifica o candidato caso não seja atendido (CANDIDATO NÃO PODE SER ENVIADO AO CLIENTE).</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold text-orange-600">2. Obrigatório</p>
+                                    <p className="text-muted-foreground">Requisito que deve ser cumprido (treinado após a contratação), porém não implica eliminação automática (CANDIDATO PODE SER ENVIADO AO CLIENTE).</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold text-yellow-600">3. Recomendado</p>
+                                    <p className="text-muted-foreground">Item desejável, que agrega valor ao perfil, mas não é mandatório (CANDIDATO PODE SER ENVIADO AO CLIENTE).</p>
+                                  </div>
+                                  <div>
+                                    <p className="font-semibold text-blue-600">4. Requerido pelo cliente</p>
+                                    <p className="text-muted-foreground">Exigência específica solicitada pelo cliente do nosso cliente para a posição (CANDIDATO PODE SER ENVIADO AO CLIENTE).</p>
+                                  </div>
+                                </div>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
                       <Controller
                         name="obrigatoriedade"
                         control={control}
@@ -451,10 +598,10 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                               <SelectValue placeholder="Selecionar obrigatoriedade" />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value="Eliminatório">Eliminatório</SelectItem>
                               <SelectItem value="Obrigatório">Obrigatório</SelectItem>
                               <SelectItem value="Recomendado">Recomendado</SelectItem>
-                              <SelectItem value="Opcional">Opcional</SelectItem>
-                              <SelectItem value="Requerido pelo Cliente">Requerido pelo Cliente</SelectItem>
+                              <SelectItem value="Requerido pelo cliente">Requerido pelo cliente</SelectItem>
                             </SelectContent>
                           </Select>
                         )}
@@ -539,7 +686,8 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                 </form>
               </CardContent>
             </Card>
-          )}
+            );
+          })()}
 
           {/* Table of matrix items */}
           <div className="border rounded-lg">
@@ -592,12 +740,13 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                       </TableCell>
                     <TableCell>
                       <Badge 
-                        variant={item.obrigatoriedade === 'Obrigatório' ? 'default' : 'secondary'}
+                        variant={item.obrigatoriedade === 'Obrigatório' || item.obrigatoriedade === 'Eliminatório' ? 'default' : 'secondary'}
                         className={cn(
                           "text-xs",
+                          item.obrigatoriedade === 'Eliminatório' && "bg-red-600 text-white",
                           item.obrigatoriedade === 'Obrigatório' && "bg-red-100 text-red-800",
                           item.obrigatoriedade === 'Recomendado' && "bg-yellow-100 text-yellow-800",
-                          item.obrigatoriedade === 'Opcional' && "bg-green-100 text-green-800"
+                          item.obrigatoriedade === 'Requerido pelo cliente' && "bg-blue-100 text-blue-800"
                         )}
                       >
                         {item.obrigatoriedade}

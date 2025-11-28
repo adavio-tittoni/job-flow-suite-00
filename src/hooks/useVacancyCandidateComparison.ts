@@ -291,7 +291,9 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
           documents_catalog (
             id,
             name,
+            nome_curso,
             codigo,
+            sigla,
             sigla_documento,
             document_category,
             group_name,
@@ -384,10 +386,11 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
 
           documentComparisons.push({
             requirementId: matrixItem.id,
-            documentName: catalogDoc.name,
+            // Usar nome_curso se disponível, senão usar name (compatibilidade com documentos antigos e novos)
+            documentName: catalogDoc.nome_curso || catalogDoc.name || '',
             documentCode: catalogDoc.codigo || '',
-            // Usar mesma lógica que EnhancedDocumentsView: sigla_documento da documents_catalog
-            sigla: catalogDoc.sigla_documento || '',
+            // Usar sigla_documento se disponível, senão usar sigla (compatibilidade com documentos antigos e novos)
+            sigla: catalogDoc.sigla_documento || catalogDoc.sigla || '',
             // Usar mesma lógica que EnhancedDocumentsView: document_category ou categoria
             category: catalogDoc.document_category || catalogDoc.categoria || '',
             obligation: matrixItem.obrigatoriedade || '',

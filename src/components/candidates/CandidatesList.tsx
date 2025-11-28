@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Edit, Trash2, Eye, ExternalLink, Linkedin, RefreshCw } from "lucide-react";
+import { Plus, Edit, Trash2, Eye, ExternalLink, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +25,7 @@ export const CandidatesList = () => {
     candidate.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     candidate.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     candidate.phones?.includes(searchTerm) ||
-    candidate.linkedin_url?.toLowerCase().includes(searchTerm.toLowerCase())
+    candidate.vacancy_title?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const formatWhatsAppLink = (phone: string) => {
@@ -45,17 +45,6 @@ export const CandidatesList = () => {
     }
   };
 
-  const normalizeLinkedInUrl = (url: string) => {
-    if (!url) return null;
-    // If it's already a full URL, return as is
-    if (url.startsWith('http')) return url;
-    // If it starts with linkedin.com, add https://
-    if (url.startsWith('linkedin.com')) return `https://${url}`;
-    // If it's just the profile part, build the full URL
-    if (url.startsWith('/in/')) return `https://linkedin.com${url}`;
-    // If it's just the username, build the full URL
-    return `https://linkedin.com/in/${url}`;
-  };
 
   const handleEdit = (candidate: Candidate) => {
     navigate(`/candidates/${candidate.id}?tab=documents`);
@@ -162,15 +151,14 @@ export const CandidatesList = () => {
                   <TableHead>Nome</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Telefone</TableHead>
-                  <TableHead>LinkedIn</TableHead>
-                  <TableHead>Cargo</TableHead>
+                  <TableHead>Vaga</TableHead>
                   <TableHead>Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredCandidates.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8">
+                    <TableCell colSpan={5} className="text-center py-8">
                       Nenhum candidato encontrado
                     </TableCell>
                   </TableRow>
@@ -201,21 +189,7 @@ export const CandidatesList = () => {
                           "-"
                         )}
                       </TableCell>
-                      <TableCell>
-                        {candidate.linkedin_url ? (
-                          <a
-                            href={normalizeLinkedInUrl(candidate.linkedin_url)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:text-primary/80 inline-flex items-center"
-                          >
-                            <Linkedin className="h-4 w-4" />
-                          </a>
-                        ) : (
-                          "-"
-                        )}
-                      </TableCell>
-                      <TableCell>{candidate.role_title || "-"}</TableCell>
+                      <TableCell>{candidate.vacancy_title || "-"}</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
                           <Button
