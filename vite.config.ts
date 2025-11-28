@@ -6,8 +6,9 @@ import path from "path";
 export default defineConfig({
   server: {
     port: 5173,
-    host: '0.0.0.0', // Escuta em todas as interfaces (IPv4 e IPv6)
+    host: '0.0.0.0', // Escuta em todas as interfaces (IPv4)
     strictPort: false, // Se a porta estiver ocupada, tenta a próxima disponível
+    open: false, // Não abre o navegador automaticamente
   },
   plugins: [react()],
   resolve: {

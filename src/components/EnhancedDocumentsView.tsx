@@ -306,6 +306,56 @@ export const EnhancedDocumentsView = ({
     }
   });
 
+  // Função auxiliar para normalizar file_url para caminho relativo do bucket
+  const normalizeFileUrl = (fileUrl: string | null | undefined): string | null => {
+    if (!fileUrl) return null;
+    
+    // Se já é um caminho relativo, retornar como está
+    if (!fileUrl.includes('http://') && !fileUrl.includes('https://') && !fileUrl.includes('supabase.co')) {
+      return fileUrl;
+    }
+    
+    // Remover query parameters antes de fazer parse
+    const urlWithoutQuery = fileUrl.split('?')[0];
+    
+    try {
+      const url = new URL(urlWithoutQuery);
+      const pathParts = url.pathname.split('/').filter(part => part !== '');
+      
+      // Encontrar 'candidate-documents' no caminho
+      const bucketIndex = pathParts.findIndex(part => part === 'candidate-documents');
+      if (bucketIndex !== -1 && bucketIndex + 1 < pathParts.length) {
+        return pathParts.slice(bucketIndex + 1).join('/');
+      }
+      
+      // Alternativa: /object/public/candidate-documents/... ou /object/sign/candidate-documents/...
+      const objectIndex = pathParts.findIndex(part => part === 'object');
+      if (objectIndex !== -1) {
+        const publicOrSignIndex = pathParts.findIndex((part, idx) => 
+          idx > objectIndex && (part === 'public' || part === 'sign')
+        );
+        if (publicOrSignIndex !== -1) {
+          const bucketIndexAfter = pathParts.findIndex((part, idx) => 
+            idx > publicOrSignIndex && part === 'candidate-documents'
+          );
+          if (bucketIndexAfter !== -1 && bucketIndexAfter + 1 < pathParts.length) {
+            return pathParts.slice(bucketIndexAfter + 1).join('/');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to normalize file_url:', fileUrl, e);
+    }
+    
+    // Fallback: tentar regex
+    const match = urlWithoutQuery.match(/candidate-documents\/(.+)$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    
+    return null;
+  };
+
   const handleExportToExcel = async () => {
     try {
       if (!documents || documents.length === 0) {
@@ -325,7 +375,9 @@ export const EnhancedDocumentsView = ({
         .filter(doc => doc.candidateDocumentId)
         .map(doc => doc.candidateDocumentId);
       
-      let documentFileUrls: Record<string, string> = {};
+      // Gerar URLs assinadas de download para cada documento
+      const documentDownloadUrls: Record<string, string> = {};
+      
       if (candidateDocumentIds.length > 0) {
         const { data: candidateDocs, error: docsError } = await supabase
           .from('candidate_documents')
@@ -333,11 +385,35 @@ export const EnhancedDocumentsView = ({
           .in('id', candidateDocumentIds);
         
         if (!docsError && candidateDocs) {
-          candidateDocs.forEach(cd => {
+          // Gerar URLs assinadas para cada documento
+          for (const cd of candidateDocs) {
             if (cd.file_url) {
-              documentFileUrls[cd.id] = cd.file_url;
+              const normalizedPath = normalizeFileUrl(cd.file_url);
+              
+              if (normalizedPath) {
+                try {
+                  // Criar URL assinada com expiração de 1 ano (31536000 segundos)
+                  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+                    .from('candidate-documents')
+                    .createSignedUrl(normalizedPath, 31536000); // 1 ano de validade
+                  
+                  if (!signedUrlError && signedUrlData) {
+                    let signedUrl = signedUrlData.signedUrl;
+                    // Garantir URL absoluta
+                    if (signedUrl.startsWith('/')) {
+                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+                      signedUrl = `${supabaseUrl}/storage/v1${signedUrl}`;
+                    }
+                    documentDownloadUrls[cd.id] = signedUrl;
+                  } else {
+                    console.warn('Erro ao gerar URL assinada para documento:', cd.id, signedUrlError);
+                  }
+                } catch (error) {
+                  console.error('Erro ao processar URL do documento:', cd.id, error);
+                }
+              }
             }
-          });
+          }
         }
       }
 
@@ -375,13 +451,12 @@ export const EnhancedDocumentsView = ({
         // Gerar URL de download do arquivo se existir
         let downloadUrl = '';
         if (doc.candidateDocumentId) {
-          const fileUrl = documentFileUrls[doc.candidateDocumentId];
-          if (fileUrl) {
-            // Construir URL para visualizar/baixar o documento no sistema
-            const baseUrl = window.location.origin;
-            downloadUrl = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.candidateDocumentId}`;
+          const signedDownloadUrl = documentDownloadUrls[doc.candidateDocumentId];
+          if (signedDownloadUrl) {
+            // Usar URL assinada do Supabase Storage para download direto
+            downloadUrl = signedDownloadUrl;
           } else {
-            // Se não houver file_url, ainda criar URL para a página do documento
+            // Se não houver URL assinada, usar URL de visualização no sistema como fallback
             const baseUrl = window.location.origin;
             downloadUrl = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.candidateDocumentId}`;
           }
@@ -418,6 +493,33 @@ export const EnhancedDocumentsView = ({
       XLSX.utils.sheet_add_json(worksheet, excelData, { 
         origin: 'A4', 
         skipHeader: false 
+      });
+
+      // Adicionar hiperlinks na coluna "URL Download" (coluna J, índice 9)
+      // Os dados começam na linha 4 (índice 3), mas com cabeçalho a primeira linha de dados é 5 (índice 4)
+      const urlColumnIndex = 9; // Coluna J (0-indexed: A=0, B=1, ..., J=9)
+      const startRowIndex = 4; // Linha 5 (0-indexed, após cabeçalho na linha 4)
+      
+      excelData.forEach((row, index) => {
+        const rowIndex = startRowIndex + index;
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: urlColumnIndex });
+        const downloadUrl = row['URL Download'];
+        
+        if (downloadUrl && downloadUrl !== '') {
+          // Criar célula com hiperlink clicável
+          // O Excel reconhece automaticamente URLs como links quando formatadas corretamente
+          worksheet[cellAddress] = {
+            v: downloadUrl, // Valor exibido (URL completa)
+            l: { Target: downloadUrl }, // Link para download
+            t: 's', // Tipo: string
+            s: { // Estilo para link (azul e sublinhado)
+              font: { 
+                color: { rgb: '0563C1' }, // Azul padrão de links
+                underline: true 
+              },
+            }
+          };
+        }
       });
 
       // Ajustar larguras das colunas
