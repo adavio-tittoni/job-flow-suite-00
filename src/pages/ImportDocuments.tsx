@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useCandidateDocuments } from "@/hooks/useCandidates";
 import { useAIDocumentProcessing } from "@/hooks/useAIDocumentProcessing";
 import { useCandidateVacancyAutoLink } from "@/hooks/useCandidateVacancyAutoLink";
@@ -36,6 +37,11 @@ const ImportDocumentsPage = () => {
   const [importedDocuments, setImportedDocuments] = useState<ImportedDocument[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [documentNotBelongingDialog, setDocumentNotBelongingDialog] = useState<{
+    open: boolean;
+    documentId?: string;
+    fileName?: string;
+  }>({ open: false });
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return;
@@ -121,8 +127,8 @@ const ImportDocumentsPage = () => {
         )
       );
 
-      // 3. Enviar para n8n webhook com documentos da matriz
-      await sendToN8nWebhookWithMatrix([document.file], candidateId!, []);
+      // 3. Enviar para n8n webhook com documentos da matriz e processar resposta
+      const webhookResponse = await sendToN8nWebhookWithMatrix([document.file], candidateId!, []);
       setImportedDocuments(prev => 
         prev.map(doc => 
           doc.id === document.id 
@@ -131,31 +137,105 @@ const ImportDocumentsPage = () => {
         )
       );
 
-      // 4. Marcar como "enviado para processamento"
-      setImportedDocuments(prev => 
-        prev.map(doc => 
-          doc.id === document.id 
-            ? { 
-                ...doc, 
-                status: 'processing', 
-                progress: 100,
-                extractedData: {
-                  document_name: document.file.name.split('.')[0],
-                  document_type: 'Processando...',
-                  detail: 'Documento enviado para processamento com IA via n8n',
-                  arquivo_original: document.file.name,
-                  file_url: fileUrl,
-                  documentId: documentId
+      // 4. Processar resposta do webhook
+      if (webhookResponse.isDocumentNotBelonging) {
+        // Documento não pertence ao candidato - mostrar diálogo e salvar com nome específico
+        setDocumentNotBelongingDialog({
+          open: true,
+          documentId: documentId,
+          fileName: document.file.name
+        });
+        
+        // Salvar documento com nome específico
+        try {
+          await supabase
+            .from('candidate_documents')
+            .update({
+              document_name: 'Documento não pertence ao candidato',
+              document_type: 'Rejeitado',
+              detail: `Documento rejeitado: ${document.file.name}. ${webhookResponse.message || 'O documento não pertence ao candidato.'}`,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', documentId);
+        } catch (error: any) {
+          console.error('Erro ao salvar documento rejeitado:', error);
+        }
+        
+        setImportedDocuments(prev => 
+          prev.map(doc => 
+            doc.id === document.id 
+              ? { 
+                  ...doc, 
+                  status: 'error', 
+                  progress: 100,
+                  error: 'Documento não pertence ao candidato',
+                  extractedData: {
+                    document_name: 'Documento não pertence ao candidato',
+                    document_type: 'Rejeitado',
+                    detail: webhookResponse.message || 'O documento não pertence ao candidato.',
+                    arquivo_original: document.file.name,
+                    file_url: fileUrl,
+                    documentId: documentId
+                  }
                 }
-              }
-            : doc
-        )
-      );
-
-      toast({
-        title: "Documento enviado para processamento",
-        description: "O documento foi enviado para processamento com IA. Aguarde a resposta do n8n.",
-      });
+              : doc
+          )
+        );
+      } else if (webhookResponse.success) {
+        // Processamento concluído com sucesso
+        setImportedDocuments(prev => 
+          prev.map(doc => 
+            doc.id === document.id 
+              ? { 
+                  ...doc, 
+                  status: 'completed', 
+                  progress: 100,
+                  extractedData: {
+                    document_name: document.file.name.split('.')[0],
+                    document_type: 'Processado',
+                    detail: webhookResponse.message || 'Documento processado com sucesso.',
+                    arquivo_original: document.file.name,
+                    file_url: fileUrl,
+                    documentId: documentId
+                  }
+                }
+              : doc
+          )
+        );
+        
+        toast({
+          title: "Documento processado",
+          description: webhookResponse.message || "O documento foi processado com sucesso.",
+        });
+      } else {
+        // Erro no processamento
+        setImportedDocuments(prev => 
+          prev.map(doc => 
+            doc.id === document.id 
+              ? { 
+                  ...doc, 
+                  status: 'error', 
+                  progress: 100,
+                  error: webhookResponse.message || 'Erro ao processar documento',
+                  extractedData: {
+                    document_name: document.file.name.split('.')[0],
+                    document_type: 'Erro',
+                    detail: webhookResponse.message || 'Erro ao processar documento.',
+                    arquivo_original: document.file.name,
+                    file_url: fileUrl,
+                    documentId: documentId
+                  }
+                }
+              : doc
+          )
+        );
+        
+        toast({
+          title: "Erro no processamento",
+          description: webhookResponse.message || "Erro ao processar documento.",
+          variant: "destructive",
+        });
+      }
 
     } catch (error: any) {
       setImportedDocuments(prev => 
@@ -333,13 +413,18 @@ const ImportDocumentsPage = () => {
                 >
                   {isProcessing ? 'Processando...' : 'Processar Todos'}
                 </Button>
-                <Button 
-                  onClick={saveAllDocuments}
-                  disabled={!importedDocuments.some(doc => doc.status === 'processing')}
-                  variant="outline"
-                >
-                  Verificar Status
-                </Button>
+                {/* Botão Voltar ao Candidato - aparece quando todos os documentos terminaram */}
+                {importedDocuments.length > 0 && 
+                 !isProcessing && 
+                 importedDocuments.every(doc => doc.status === 'completed' || doc.status === 'error') && (
+                  <Button 
+                    onClick={() => navigate(`/candidates/${candidateId}`)}
+                    variant="default"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Voltar ao Candidato
+                  </Button>
+                )}
               </div>
             </div>
           </CardHeader>
@@ -378,112 +463,25 @@ const ImportDocumentsPage = () => {
                     </div>
                   )}
 
-                  {document.status === 'processing' && document.extractedData && (
-                    <div className="space-y-3">
+                  {document.status === 'processing' && (
+                    <div className="space-y-2">
                       <Alert>
                         <div className="h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                         <AlertDescription>
                           Documento enviado para processamento com IA via n8n. Aguarde a resposta...
                         </AlertDescription>
                       </Alert>
-                      
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="font-medium">Nome:</span> {document.extractedData.document_name}
-                        </div>
-                        <div>
-                          <span className="font-medium">Status:</span> {document.extractedData.document_type}
-                        </div>
-                        <div>
-                          <span className="font-medium">ID do Documento:</span> {document.extractedData.documentId}
-                        </div>
-                        <div>
-                          <span className="font-medium">Arquivo:</span> {document.extractedData.arquivo_original}
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <Button 
-                          size="sm"
-                          variant="outline"
-                          disabled
-                        >
-                          Aguardando Processamento...
-                        </Button>
-                        <Button 
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const dataStr = JSON.stringify(document.extractedData, null, 2);
-                            const dataBlob = new Blob([dataStr], { type: 'application/json' });
-                            const url = URL.createObjectURL(dataBlob);
-                            const linkElement = window.document.createElement('a');
-                            linkElement.href = url;
-                            linkElement.download = `${document.name}_status.json`;
-                            linkElement.click();
-                          }}
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Baixar Status
-                        </Button>
-                      </div>
                     </div>
                   )}
 
-                  {document.status === 'completed' && document.extractedData && (
-                    <div className="space-y-3">
+                  {document.status === 'completed' && (
+                    <div className="space-y-2">
                       <Alert>
                         <CheckCircle className="h-4 w-4" />
                         <AlertDescription>
-                          Documento processado com sucesso! Dados extraídos automaticamente.
+                          Documento processado com sucesso!
                         </AlertDescription>
                       </Alert>
-                      
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="font-medium">Nome:</span> {document.extractedData.document_name}
-                        </div>
-                        <div>
-                          <span className="font-medium">Tipo:</span> {document.extractedData.document_type}
-                        </div>
-                        <div>
-                          <span className="font-medium">Número:</span> {document.extractedData.registration_number}
-                        </div>
-                        <div>
-                          <span className="font-medium">Emissão:</span> {document.extractedData.issue_date}
-                        </div>
-                        <div>
-                          <span className="font-medium">Validade:</span> {document.extractedData.expiry_date}
-                        </div>
-                        <div>
-                          <span className="font-medium">Carga Horária:</span> {document.extractedData.carga_horaria_total}h
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <Button 
-                          size="sm"
-                          onClick={() => saveDocumentToDatabase(document)}
-                        >
-                          Salvar Documento
-                        </Button>
-                        <Button 
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const dataStr = JSON.stringify(document.extractedData, null, 2);
-                            const dataBlob = new Blob([dataStr], { type: 'application/json' });
-                            const url = URL.createObjectURL(dataBlob);
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.download = `${document.name}_dados.json`;
-                            link.click();
-                          }}
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Baixar Dados
-                        </Button>
-                      </div>
                     </div>
                   )}
 
@@ -548,6 +546,34 @@ const ImportDocumentsPage = () => {
           </Alert>
         </CardContent>
       </Card>
+
+      {/* Diálogo para documento que não pertence ao candidato */}
+      <AlertDialog open={documentNotBelongingDialog.open} onOpenChange={(open) => {
+        if (!open) {
+          setDocumentNotBelongingDialog({ open: false });
+        }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-yellow-500" />
+              Documento não pertence ao candidato
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              O documento <strong>{documentNotBelongingDialog.fileName}</strong> foi identificado como não pertencente ao candidato.
+              <br /><br />
+              O documento foi salvo com o nome "Documento não pertence ao candidato" para que você possa excluí-lo posteriormente se necessário.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => {
+              setDocumentNotBelongingDialog({ open: false });
+            }}>
+              Entendi
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

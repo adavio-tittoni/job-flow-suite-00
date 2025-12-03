@@ -457,7 +457,7 @@ export const useAIDocumentProcessing = () => {
     files: File[],
     candidateId: string,
     processedResults: AIDocumentProcessingResult[] = []
-  ): Promise<void> => {
+  ): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
     try {
       // Converter arquivos para base64
       const filesWithBase64 = await Promise.all(
@@ -481,7 +481,7 @@ export const useAIDocumentProcessing = () => {
       );
 
       // Usar a função com dados preparados
-      return sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
+      return await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
 
     } catch (error: any) {
       console.error('Error preparing webhook data:', {
@@ -490,7 +490,7 @@ export const useAIDocumentProcessing = () => {
         totalFiles: files.length,
         files: files.map(f => ({ name: f.name, size: f.size, type: f.type }))
       });
-      throw new Error(`Erro ao preparar dados para webhook: ${error.message}`);
+      return { success: false, message: error.message };
     }
   };
 
@@ -498,12 +498,25 @@ export const useAIDocumentProcessing = () => {
     filesWithBase64: any[],
     candidateId: string,
     processedResults: AIDocumentProcessingResult[] = []
-  ): Promise<void> => {
+  ): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
     try {
+      // Buscar nome do candidato
+      const { data: candidate, error: candidateError } = await supabase
+        .from('candidates')
+        .select('id, name')
+        .eq('id', candidateId)
+        .single();
+
+      if (candidateError) {
+        console.error('Erro ao buscar candidato:', candidateError);
+        // Continuar mesmo sem o nome, mas logar o erro
+      }
+
       // Preparar dados para envio
       console.log('Preparing webhook data...');
       const webhookData = {
         candidate_id: candidateId,
+        candidate_name: candidate?.name || null,
         files: filesWithBase64,
         processed_results: processedResults,
         timestamp: new Date().toISOString(),
@@ -514,6 +527,7 @@ export const useAIDocumentProcessing = () => {
       
       console.log('Webhook data structure:', {
         candidate_id: webhookData.candidate_id,
+        candidate_name: webhookData.candidate_name,
         total_files: webhookData.total_files,
         timestamp: webhookData.timestamp,
         files: webhookData.files.map(f => ({
@@ -529,6 +543,7 @@ export const useAIDocumentProcessing = () => {
       const totalDataSize = JSON.stringify(webhookData).length;
       console.log('Webhook data prepared:', {
         candidate_id: webhookData.candidate_id,
+        candidate_name: webhookData.candidate_name,
         total_files: webhookData.total_files,
         timestamp: webhookData.timestamp,
         totalDataSize: totalDataSize,
@@ -557,6 +572,7 @@ export const useAIDocumentProcessing = () => {
           console.log('Request body size:', JSON.stringify(webhookData).length);
           console.log('Request body preview:', {
             candidate_id: webhookData.candidate_id,
+            candidate_name: webhookData.candidate_name,
             total_files: webhookData.total_files,
             files: webhookData.files.map(f => ({
               name: f.name,
@@ -581,15 +597,12 @@ export const useAIDocumentProcessing = () => {
             headers: Object.fromEntries(response.headers.entries())
           });
           
-          // Log response body for debugging
-          if (!response.ok) {
-            const responseText = await response.text();
-            console.error('Webhook error response body:', responseText);
-          }
+          // Ler resposta uma única vez
+          const responseText = await response.text();
+          console.log('Webhook response body:', responseText);
 
           if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`Webhook failed: ${response.status} ${response.statusText}`, errorText);
+            console.error(`Webhook failed: ${response.status} ${response.statusText}`, responseText);
             
             if (retryCount < 2) {
               console.log(`Retrying webhook request (attempt ${retryCount + 1})`);
@@ -597,11 +610,40 @@ export const useAIDocumentProcessing = () => {
               return sendWithRetry(retryCount + 1);
             }
             
-            throw new Error(`Webhook failed: ${response.status} - ${errorText}`);
+            throw new Error(`Webhook failed: ${response.status} - ${responseText}`);
           } else {
             console.log('Webhook sent successfully');
-            const responseText = await response.text();
-            console.log('Webhook response body:', responseText);
+            
+            // Processar resposta do webhook
+            let responseData: any = null;
+            try {
+              responseData = JSON.parse(responseText);
+            } catch {
+              // Se não for JSON, tratar como texto
+              responseData = { message: responseText };
+            }
+            
+            // Verificar se a resposta indica que o documento não pertence ao candidato
+            const responseMessage = responseData?.message || responseText || '';
+            const responseLower = responseMessage.toLowerCase();
+            const isDocumentNotBelonging = 
+              responseLower.includes('documento não pertence ao candidato') ||
+              responseLower.includes('documento nao pertence ao candidato') ||
+              responseLower.includes('documento não pertence') ||
+              responseLower.includes('documento nao pertence') ||
+              responseLower.includes('não pertence ao candidato') ||
+              responseLower.includes('nao pertence ao candidato');
+            
+            if (isDocumentNotBelonging) {
+              console.warn('⚠️ Documento não pertence ao candidato detectado na resposta');
+            }
+            
+            return {
+              success: true,
+              message: responseMessage,
+              documentId: responseData?.document_id,
+              isDocumentNotBelonging
+            };
           }
         } catch (error) {
           console.error(`Webhook error on attempt ${retryCount + 1}:`, error);
@@ -628,7 +670,7 @@ export const useAIDocumentProcessing = () => {
           description: `Erro ao enviar para n8n: ${error.message}`,
           variant: "destructive",
         });
-        throw error;
+        return { success: false, message: error.message };
       });
 
     } catch (error: any) {
@@ -821,7 +863,7 @@ export const useAIDocumentProcessing = () => {
     files: File[],
     candidateId: string,
     processedResults: AIDocumentProcessingResult[] = []
-  ): Promise<void> => {
+  ): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
     try {
       console.log('🌐 Iniciando envio de webhook com documentos da matriz...');
       
@@ -856,7 +898,7 @@ export const useAIDocumentProcessing = () => {
       // 2. Obter candidato e seu matrix_id
       const { data: candidate, error: candidateError } = await supabase
         .from('candidates')
-        .select('id, matrix_id')
+        .select('id, matrix_id, name')
         .eq('id', candidateId)
         .single();
 
@@ -867,7 +909,8 @@ export const useAIDocumentProcessing = () => {
 
       if (!candidate.matrix_id) {
         console.warn('⚠️ Nenhum matrix_id encontrado para o candidato, enviando sem documentos da matriz');
-        return await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
+        const result = await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
+        return { success: result.success, message: result.message, documentId: result.documentId, isDocumentNotBelonging: result.isDocumentNotBelonging };
       }
 
       console.log('✅ Matrix ID encontrado:', candidate.matrix_id);
@@ -916,6 +959,7 @@ export const useAIDocumentProcessing = () => {
       // 5. Preparar dados do webhook com documentos da matriz
       const webhookData = {
         candidate_id: candidateId,
+        candidate_name: candidate.name,
         matrix_id: candidate.matrix_id,
         files: filesWithBase64,
         matrix_documents: matrixDocuments,
@@ -929,6 +973,7 @@ export const useAIDocumentProcessing = () => {
 
       console.log('📤 Estrutura de dados do webhook:', {
         candidate_id: webhookData.candidate_id,
+        candidate_name: webhookData.candidate_name,
         matrix_id: webhookData.matrix_id,
         total_files: webhookData.total_files,
         total_matrix_documents: webhookData.total_matrix_documents,
@@ -938,7 +983,7 @@ export const useAIDocumentProcessing = () => {
       // 5. Enviar para webhook do n8n
       const webhookUrl = 'https://n8nwebhook.aulan8ntech.shop/webhook/8da335c4-08d9-4ffb-8ce6-7d4ce4e02bdf';
       
-      const sendWithRetry = async (retryCount = 0) => {
+      const sendWithRetry = async (retryCount = 0): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
         try {
           console.log(`📡 Enviando webhook com documentos da matriz (tentativa ${retryCount + 1})`);
           
@@ -965,6 +1010,37 @@ export const useAIDocumentProcessing = () => {
           console.log('✅ Webhook enviado com sucesso com documentos da matriz');
           const responseText = await response.text();
           console.log('📥 Resposta do webhook:', responseText);
+          
+          // Processar resposta do webhook
+          let responseData: any = null;
+          try {
+            responseData = JSON.parse(responseText);
+          } catch {
+            // Se não for JSON, tratar como texto
+            responseData = { message: responseText };
+          }
+          
+          // Verificar se a resposta indica que o documento não pertence ao candidato
+          const responseMessage = responseData?.message || responseText || '';
+          const responseLower = responseMessage.toLowerCase();
+          const isDocumentNotBelonging = 
+            responseLower.includes('documento não pertence ao candidato') ||
+            responseLower.includes('documento nao pertence ao candidato') ||
+            responseLower.includes('documento não pertence') ||
+            responseLower.includes('documento nao pertence') ||
+            responseLower.includes('não pertence ao candidato') ||
+            responseLower.includes('nao pertence ao candidato');
+          
+          if (isDocumentNotBelonging) {
+            console.warn('⚠️ Documento não pertence ao candidato detectado na resposta');
+          }
+          
+          return {
+            success: true,
+            message: responseMessage,
+            documentId: responseData?.document_id,
+            isDocumentNotBelonging
+          };
         } catch (error) {
           console.error(`❌ Erro na tentativa ${retryCount + 1}:`, error);
           if (retryCount < 2) {
