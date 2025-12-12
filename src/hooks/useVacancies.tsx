@@ -30,6 +30,11 @@ export interface Vacancy {
     empresa: string;
     versao_matriz: string | null;
   } | null;
+  recruiter?: {
+    id: string;
+    name: string;
+    email: string;
+  } | null;
 }
 
 export interface Stage {
@@ -55,11 +60,34 @@ export const useVacancies = () => {
 
       if (error) throw error;
       
+      // Buscar perfis dos recrutadores
+      const recruiterIds = [...new Set((data || []).map(v => v.recruiter_id).filter(Boolean))];
+      let recruitersMap: Record<string, { id: string; name: string; email: string }> = {};
+      
+      if (recruiterIds.length > 0) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, name, email")
+          .in("id", recruiterIds);
+        
+        if (!profilesError && profiles) {
+          recruitersMap = profiles.reduce((acc, profile) => {
+            acc[profile.id] = {
+              id: profile.id,
+              name: profile.name,
+              email: profile.email
+            };
+            return acc;
+          }, {} as Record<string, { id: string; name: string; email: string }>);
+        }
+      }
+      
       // Mapear os dados com valores padrão e contagem correta
       const vacanciesWithDefaults = (data || []).map(vacancy => ({
         ...vacancy,
         candidates_count: vacancy.vacancy_candidates?.[0]?.count || 0,
-        matrices: null // Valor padrão por enquanto
+        matrices: null, // Valor padrão por enquanto
+        recruiter: vacancy.recruiter_id ? recruitersMap[vacancy.recruiter_id] || null : null
       }));
       
       return vacanciesWithDefaults as Vacancy[];

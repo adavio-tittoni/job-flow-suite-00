@@ -194,6 +194,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
     setValue("regra_validade", item.regra_validade);
   };
 
+
   const confirmDelete = async () => {
     if (itemToDelete) {
       try {

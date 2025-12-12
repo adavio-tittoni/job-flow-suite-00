@@ -524,6 +524,7 @@ export type Database = {
       }
       matrices: {
         Row: {
+          active: boolean
           cargo: string
           created_at: string | null
           created_by: string | null
@@ -534,6 +535,7 @@ export type Database = {
           versao_matriz: string
         }
         Insert: {
+          active?: boolean
           cargo: string
           created_at?: string | null
           created_by?: string | null
@@ -544,6 +546,7 @@ export type Database = {
           versao_matriz: string
         }
         Update: {
+          active?: boolean
           cargo?: string
           created_at?: string | null
           created_by?: string | null

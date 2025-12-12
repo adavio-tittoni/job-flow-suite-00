@@ -575,6 +575,201 @@ export const EnhancedDocumentsView = ({
     }
   };
 
+  const handleExportPending = async () => {
+    try {
+      // Filtrar apenas documentos pendentes
+      const pendingDocuments = documents.filter(doc => doc.status === 'PENDENTE');
+      
+      if (!pendingDocuments || pendingDocuments.length === 0) {
+        toast({
+          title: "Nenhum documento pendente",
+          description: "Não há documentos pendentes para exportar.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const vacancyName = vacancy?.title || 'N/A';
+      const candidateNameValue = candidateName || 'N/A';
+
+      // Buscar documentos do candidato para obter file_url
+      const candidateDocumentIds = pendingDocuments
+        .filter(doc => doc.candidateDocumentId)
+        .map(doc => doc.candidateDocumentId);
+      
+      // Gerar URLs assinadas de download para cada documento
+      const documentDownloadUrls: Record<string, string> = {};
+      
+      if (candidateDocumentIds.length > 0) {
+        const { data: candidateDocs, error: docsError } = await supabase
+          .from('candidate_documents')
+          .select('id, file_url')
+          .in('id', candidateDocumentIds);
+        
+        if (!docsError && candidateDocs) {
+          // Gerar URLs assinadas para cada documento
+          for (const cd of candidateDocs) {
+            if (cd.file_url) {
+              const normalizedPath = normalizeFileUrl(cd.file_url);
+              
+              if (normalizedPath) {
+                try {
+                  // Criar URL assinada com expiração de 1 ano (31536000 segundos)
+                  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+                    .from('candidate-documents')
+                    .createSignedUrl(normalizedPath, 31536000); // 1 ano de validade
+                  
+                  if (!signedUrlError && signedUrlData) {
+                    let signedUrl = signedUrlData.signedUrl;
+                    // Garantir URL absoluta
+                    if (signedUrl.startsWith('/')) {
+                      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+                      signedUrl = `${supabaseUrl}/storage/v1${signedUrl}`;
+                    }
+                    documentDownloadUrls[cd.id] = signedUrl;
+                  } else {
+                    console.warn('Erro ao gerar URL assinada para documento:', cd.id, signedUrlError);
+                  }
+                } catch (error) {
+                  console.error('Erro ao processar URL do documento:', cd.id, error);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Preparar dados para exportação seguindo os mesmos campos do Exportar Excel
+      const excelData = pendingDocuments.map(doc => {
+        // Formatar data de validade
+        let validade = 'N/A';
+        if (doc.validityDate && doc.validityDate !== 'null' && doc.validityDate !== 'undefined') {
+          try {
+            const date = new Date(doc.validityDate);
+            if (!isNaN(date.getTime())) {
+              validade = format(date, 'dd/MM/yyyy');
+            }
+          } catch {
+            validade = 'N/A';
+          }
+        }
+
+        // Formatar status
+        let statusText = 'Pendente';
+
+        // Gerar URL de download do arquivo se existir
+        let downloadUrl = '';
+        if (doc.candidateDocumentId) {
+          const signedDownloadUrl = documentDownloadUrls[doc.candidateDocumentId];
+          if (signedDownloadUrl) {
+            // Usar URL assinada do Supabase Storage para download direto
+            downloadUrl = signedDownloadUrl;
+          } else {
+            // Se não houver URL assinada, usar URL de visualização no sistema como fallback
+            const baseUrl = window.location.origin;
+            downloadUrl = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.candidateDocumentId}`;
+          }
+        }
+
+        return {
+          'Categoria': doc.category || '-',
+          'Sigla': doc.sigla || '-',
+          'Documento': doc.documentName || '-',
+          'Código': doc.documentCode || '-',
+          'Obrigatoriedade': doc.obligation || '-',
+          'Horas': doc.requiredHours > 0 ? `${doc.requiredHours}h` : '-',
+          'Modalidade': doc.modality || '-',
+          'Status': statusText,
+          'Validade': validade,
+          'URL Download': downloadUrl
+        };
+      });
+
+      // Criar workbook
+      const workbook = XLSX.utils.book_new();
+
+      // Criar cabeçalho com informações do candidato e vaga (mesmo formato do Exportar Excel)
+      const headerInfo = [
+        ['Nome da Vaga', vacancyName],
+        ['Nome do Candidato', candidateNameValue],
+        [], // Linha vazia
+      ];
+
+      // Criar worksheet começando com o cabeçalho
+      const worksheet = XLSX.utils.aoa_to_sheet(headerInfo);
+
+      // Adicionar dados começando na linha 4 (após o cabeçalho)
+      XLSX.utils.sheet_add_json(worksheet, excelData, { 
+        origin: 'A4', 
+        skipHeader: false 
+      });
+
+      // Adicionar hiperlinks na coluna "URL Download" (coluna J, índice 9)
+      const urlColumnIndex = 9; // Coluna J (0-indexed: A=0, B=1, ..., J=9)
+      const startRowIndex = 4; // Linha 5 (0-indexed, após cabeçalho na linha 4)
+      
+      excelData.forEach((row, index) => {
+        const rowIndex = startRowIndex + index;
+        const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: urlColumnIndex });
+        const downloadUrl = row['URL Download'];
+        
+        if (downloadUrl && downloadUrl !== '') {
+          // Criar célula com hiperlink clicável
+          worksheet[cellAddress] = {
+            v: downloadUrl, // Valor exibido (URL completa)
+            l: { Target: downloadUrl }, // Link para download
+            t: 's', // Tipo: string
+            s: { // Estilo para link (azul e sublinhado)
+              font: { 
+                color: { rgb: '0563C1' }, // Azul padrão de links
+                underline: true 
+              },
+            }
+          };
+        }
+      });
+
+      // Ajustar larguras das colunas (mesmas do Exportar Excel)
+      const colWidths = [
+        { wch: 15 }, // Categoria
+        { wch: 12 }, // Sigla
+        { wch: 40 }, // Documento
+        { wch: 20 }, // Código
+        { wch: 18 }, // Obrigatoriedade
+        { wch: 10 }, // Horas
+        { wch: 15 }, // Modalidade
+        { wch: 12 }, // Status
+        { wch: 15 }, // Validade
+        { wch: 60 }, // URL Download
+      ];
+      worksheet['!cols'] = colWidths;
+
+      // Adicionar worksheet ao workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Documentos Pendentes');
+
+      // Gerar nome do arquivo
+      const timestamp = new Date().getTime();
+      const safeCandidateName = candidateNameValue.replace(/[^a-zA-Z0-9]/g, '_');
+      const safeVacancyName = vacancyName.replace(/[^a-zA-Z0-9]/g, '_');
+      const fileName = `documentos_pendentes_${safeVacancyName}_${safeCandidateName}_${timestamp}.xlsx`;
+
+      // Baixar arquivo
+      XLSX.writeFile(workbook, fileName);
+
+      toast({
+        title: "Exportação concluída",
+        description: `${pendingDocuments.length} documento(s) pendente(s) exportado(s) em Excel com sucesso.`,
+      });
+    } catch (error: any) {
+      console.error('Erro ao exportar documentos pendentes:', error);
+      toast({
+        title: "Erro ao exportar",
+        description: error.message || "Não foi possível exportar os documentos pendentes.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Enhanced Header Section */}
@@ -626,18 +821,16 @@ export const EnhancedDocumentsView = ({
                   Copiar Link
                 </Button>
               )}
-              {onExportPending && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  disabled={loading}
-                  onClick={onExportPending}
-                  className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  Exportar Pendentes
-                </Button>
-              )}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                disabled={loading || !documents || documents.length === 0 || summary.pending === 0}
+                onClick={handleExportPending}
+                className="bg-white border-blue-200 text-blue-700 hover:bg-blue-50"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Exportar Pendentes
+              </Button>
             </div>
           </div>
         </CardHeader>

@@ -8,6 +8,7 @@ export interface Matrix {
   solicitado_por: string;
   versao_matriz: string;
   user_email: string;
+  active?: boolean;
   created_by?: string;
   created_at: string;
 }

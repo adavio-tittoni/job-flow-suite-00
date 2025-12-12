@@ -8,7 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, X, User, CheckIcon, Loader2, Download } from "lucide-react";
+import { Plus, X, User, CheckIcon, Loader2, Download, CheckCircle2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
@@ -471,12 +471,45 @@ interface CandidateCardProps {
 
 const CandidateCard = ({ vacancyCandidate, matrixId, vacancyId, onRemove, onViewCandidate }: CandidateCardProps) => {
   const { candidate } = vacancyCandidate;
+  const [approvalStatus, setApprovalStatus] = useState<boolean | null>(null);
+  const [loadingApproval, setLoadingApproval] = useState(true);
   
   // Usar useVacancyCandidateComparison para ter os mesmos dados da visão geral e detalhada
   const { comparisons, loading: isAdherenceLoading } = useVacancyCandidateComparison(vacancyId);
   
   // Buscar os dados deste candidato específico nas comparações
   const candidateComparison = comparisons.find(comp => comp.candidateId === candidate.id);
+
+  // Buscar status de aprovação do candidato para esta vaga
+  useEffect(() => {
+    const fetchApprovalStatus = async () => {
+      try {
+        setLoadingApproval(true);
+        const { data, error } = await supabase
+          .from('candidate_history')
+          .select('approved')
+          .eq('candidate_id', candidate.id)
+          .eq('vacancy_id', vacancyId)
+          .not('approved', 'is', null)
+          .order('event_date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        setApprovalStatus(data?.approved ?? null);
+      } catch (error) {
+        console.error('Erro ao buscar status de aprovação:', error);
+        setApprovalStatus(null);
+      } finally {
+        setLoadingApproval(false);
+      }
+    };
+
+    fetchApprovalStatus();
+  }, [candidate.id, vacancyId]);
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -497,7 +530,7 @@ const CandidateCard = ({ vacancyCandidate, matrixId, vacancyId, onRemove, onView
     <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={onViewCandidate}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
             <Avatar className="h-10 w-10">
               <AvatarImage src={candidate.photo_url} />
               <AvatarFallback>
@@ -511,17 +544,38 @@ const CandidateCard = ({ vacancyCandidate, matrixId, vacancyId, onRemove, onView
               )}
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            className="h-8 w-8 p-0 hover:bg-destructive hover:text-destructive-foreground"
-          >
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Badge de status de aprovação */}
+            {!loadingApproval && approvalStatus !== null && (
+              <Badge 
+                variant={approvalStatus ? "default" : "destructive"}
+                className="flex items-center gap-1"
+              >
+                {approvalStatus ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3" />
+                    Aprovado
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="h-3 w-3" />
+                    Não aprovado
+                  </>
+                )}
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              className="h-8 w-8 p-0 hover:bg-destructive hover:text-destructive-foreground"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-3">

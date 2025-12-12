@@ -11,7 +11,7 @@ export function AppHeader() {
         </Button>
         
         <div className="flex items-center gap-3 ml-4">
-          <h1 className="font-bold text-xl hidden sm:block">CertifAi</h1>
+          <h1 className="font-bold text-xl hidden sm:block">CertfAI</h1>
           <div className="flex items-center justify-center w-20 h-16">
             <img 
               src="/Capturar.PNG" 

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Save, Users, FileText } from "lucide-react";
+import { ArrowLeft, Save, Users, FileText, Power, PowerOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -20,6 +20,7 @@ interface Matrix {
   versao_matriz: string;
   solicitado_por: string;
   user_email: string;
+  active?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +48,7 @@ export const MatrixEditor = () => {
     versao_matriz: "",
     user_email: "",
   });
+  const [isActive, setIsActive] = useState(true);
 
   // Load matrix data
   useEffect(() => {
@@ -71,6 +73,7 @@ export const MatrixEditor = () => {
             versao_matriz: matrixData.versao_matriz || "",
             user_email: matrixData.user_email || "",
           });
+          setIsActive(matrixData.active !== false);
         }
       } catch (error: any) {
         toast({
@@ -120,7 +123,7 @@ export const MatrixEditor = () => {
     try {
       const { error } = await supabase
         .from('matrices')
-        .update(formData)
+        .update({ ...formData, active: isActive })
         .eq('id', id);
 
       if (error) throw error;
@@ -131,7 +134,7 @@ export const MatrixEditor = () => {
       });
 
       // Update local state
-      setMatrix(prev => prev ? { ...prev, ...formData } : null);
+      setMatrix(prev => prev ? { ...prev, ...formData, active: isActive } : null);
     } catch (error: any) {
       toast({
         title: "Erro ao salvar",
@@ -140,6 +143,35 @@ export const MatrixEditor = () => {
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleToggleActive = async () => {
+    if (!id) return;
+    
+    const newActiveState = !isActive;
+    
+    try {
+      const { error } = await supabase
+        .from('matrices')
+        .update({ active: newActiveState })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setIsActive(newActiveState);
+      setMatrix(prev => prev ? { ...prev, active: newActiveState } : null);
+
+      toast({
+        title: newActiveState ? "Matriz ativada" : "Matriz desativada",
+        description: `A matriz foi ${newActiveState ? 'ativada' : 'desativada'} com sucesso.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Ocorreu um erro ao alterar o status da matriz.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -197,6 +229,15 @@ export const MatrixEditor = () => {
                     <Badge variant="outline" className="text-xs bg-white">
                       v{matrix.versao_matriz}
                     </Badge>
+                    {isActive ? (
+                      <Badge variant="default" className="bg-green-100 text-green-800 border-green-200">
+                        Ativa
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="bg-gray-100 text-gray-600 border-gray-200">
+                        Inativa
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </div>
@@ -206,7 +247,24 @@ export const MatrixEditor = () => {
             </div>
           </div>
           
-          <div className="text-right">
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={handleToggleActive}
+              variant={isActive ? "outline" : "default"}
+              className={isActive ? "border-orange-300 text-orange-700 hover:bg-orange-50" : "bg-orange-600 hover:bg-orange-700 text-white"}
+            >
+              {isActive ? (
+                <>
+                  <PowerOff className="h-4 w-4 mr-2" />
+                  Desativar Matriz
+                </>
+              ) : (
+                <>
+                  <Power className="h-4 w-4 mr-2" />
+                  Ativar Matriz
+                </>
+              )}
+            </Button>
             <Button 
               onClick={handleSave}
               disabled={isSaving}

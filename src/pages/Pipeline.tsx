@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useQuery } from "@tanstack/react-query";
 import { 
   MapPin, 
@@ -32,12 +33,12 @@ export default function Pipeline() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [viewMode, setViewMode] = useState<"kanban" | "stats">("kanban");
 
-  // Fetch recruiters and their vacancies with enhanced data
+  // Fetch recruiters and their vacancies with enhanced data including candidates
   const { data: recruitersData, isLoading } = useQuery({
     queryKey: ["recruiters-vacancies"],
     queryFn: async () => {
       // First, get all vacancies with recruiter_id and additional data
-      const { data: vacancies, error: vacanciesError } = await supabase
+      const { data: vacancies, error: vacanciesError } = await (supabase
         .from("vacancies")
         .select(`
           id,
@@ -55,12 +56,12 @@ export default function Pipeline() {
           updated_at,
           candidates_count
         `)
-        .not("recruiter_id", "is", null);
+        .not("recruiter_id", "is", null) as any);
 
       if (vacanciesError) throw vacanciesError;
 
       // Then, get all unique recruiter IDs
-      const recruiterIds = [...new Set(vacancies?.map(v => v.recruiter_id) || [])];
+      const recruiterIds = [...new Set((vacancies as any)?.map((v: any) => v.recruiter_id).filter(Boolean) || [])] as string[];
       
       // Fetch profiles for these recruiters
       const { data: profiles, error: profilesError } = await supabase
@@ -70,24 +71,67 @@ export default function Pipeline() {
 
       if (profilesError) throw profilesError;
 
+      // Get all vacancy IDs to fetch related candidates
+      const vacancyIds = (vacancies as any)?.map((v: any) => v.id) || [];
+      
+      // Fetch candidates related to these vacancies
+      let vacancyCandidatesMap: Record<string, any[]> = {};
+      if (vacancyIds.length > 0) {
+        const { data: vacancyCandidates, error: candidatesError } = await (supabase
+          .from("vacancy_candidates" as any)
+          .select(`
+            vacancy_id,
+            candidates!inner (
+              id,
+              name,
+              email,
+              role_title
+            )
+          `)
+          .in("vacancy_id", vacancyIds) as any);
+
+        if (!candidatesError && vacancyCandidates) {
+          vacancyCandidates.forEach((vc: any) => {
+            if (!vacancyCandidatesMap[vc.vacancy_id]) {
+              vacancyCandidatesMap[vc.vacancy_id] = [];
+            }
+            // Handle both single object and array formats from Supabase
+            const candidates = Array.isArray(vc.candidates) ? vc.candidates : (vc.candidates ? [vc.candidates] : []);
+            candidates.forEach((candidate: any) => {
+              if (candidate) {
+                vacancyCandidatesMap[vc.vacancy_id].push(candidate);
+              }
+            });
+          });
+        }
+      }
+
       // Combine the data
-      return vacancies?.map(vacancy => ({
+      return (vacancies as any)?.map((vacancy: any) => ({
         ...vacancy,
-        profiles: profiles?.find(p => p.id === vacancy.recruiter_id)
+        profiles: profiles?.find((p: any) => p.id === vacancy.recruiter_id),
+        candidates: vacancyCandidatesMap[vacancy.id] || []
       })) || [];
     },
   });
 
-  // Filter vacancies based on search and status
+  // Filter vacancies based on search and status (including candidate search)
   const filteredVacancies = useMemo(() => {
     if (!recruitersData) return [];
     
     return recruitersData.filter(vacancy => {
+      const searchLower = searchTerm.toLowerCase();
       const matchesSearch = searchTerm === "" || 
-        vacancy.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        vacancy.department?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        vacancy.company?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        vacancy.profiles?.name.toLowerCase().includes(searchTerm.toLowerCase());
+        vacancy.title.toLowerCase().includes(searchLower) ||
+        vacancy.department?.toLowerCase().includes(searchLower) ||
+        vacancy.company?.toLowerCase().includes(searchLower) ||
+        vacancy.profiles?.name.toLowerCase().includes(searchLower) ||
+        // Search in candidates (perfis)
+        vacancy.candidates?.some((candidate: any) => 
+          candidate.name?.toLowerCase().includes(searchLower) ||
+          candidate.email?.toLowerCase().includes(searchLower) ||
+          candidate.role_title?.toLowerCase().includes(searchLower)
+        );
       
       const matchesStatus = statusFilter === "all" || vacancy.status === statusFilter;
       
@@ -110,15 +154,22 @@ export default function Pipeline() {
 
   // Calculate statistics
   const stats = useMemo(() => {
-    if (!recruitersData) return { totalVacancies: 0, totalRecruiters: 0, activeVacancies: 0, totalCandidates: 0 };
+    if (!recruitersData) return { totalVacancies: 0, totalRecruiters: 0, activeVacancies: 0, closedVacancies: 0, totalCandidates: 0 };
     
     const totalVacancies = recruitersData.length;
     const totalRecruiters = new Set(recruitersData.map(v => v.recruiter_id)).size;
     const activeVacancies = recruitersData.filter(v => v.status === 'open').length;
+    const closedVacancies = recruitersData.filter(v => v.status === 'closed').length;
     const totalCandidates = recruitersData.reduce((sum, v) => sum + (v.candidates_count || 0), 0);
     
-    return { totalVacancies, totalRecruiters, activeVacancies, totalCandidates };
+    return { totalVacancies, totalRecruiters, activeVacancies, closedVacancies, totalCandidates };
   }, [recruitersData]);
+
+  // Handler to filter vacancies by clicking on stat cards
+  const handleStatCardClick = (filterType: 'all' | 'open' | 'closed') => {
+    setStatusFilter(filterType);
+    setViewMode('kanban');
+  };
 
   const formatSalary = (salary: string | number) => {
     if (!salary) return "-";
@@ -211,27 +262,51 @@ export default function Pipeline() {
 
       {/* Statistics Dashboard */}
       {viewMode === "stats" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <Card 
+            className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200 cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-105"
+            onClick={() => handleStatCardClick('all')}
+          >
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-blue-600">Total de Vagas</p>
                   <p className="text-3xl font-bold text-blue-800">{stats.totalVacancies}</p>
+                  <p className="text-xs text-blue-500 mt-1">Clique para ver todas</p>
                 </div>
                 <Building className="h-8 w-8 text-blue-600" />
               </div>
             </CardContent>
           </Card>
           
-          <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+          <Card 
+            className="bg-gradient-to-br from-green-50 to-green-100 border-green-200 cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-105"
+            onClick={() => handleStatCardClick('open')}
+          >
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-green-600">Vagas Ativas</p>
+                  <p className="text-sm font-medium text-green-600">Vagas Abertas</p>
                   <p className="text-3xl font-bold text-green-800">{stats.activeVacancies}</p>
+                  <p className="text-xs text-green-500 mt-1">Clique para ver abertas</p>
                 </div>
                 <CheckCircle className="h-8 w-8 text-green-600" />
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card 
+            className="bg-gradient-to-br from-red-50 to-red-100 border-red-200 cursor-pointer transition-all duration-200 hover:shadow-lg hover:scale-105"
+            onClick={() => handleStatCardClick('closed')}
+          >
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-red-600">Vagas Fechadas</p>
+                  <p className="text-3xl font-bold text-red-800">{stats.closedVacancies}</p>
+                  <p className="text-xs text-red-500 mt-1">Clique para ver fechadas</p>
+                </div>
+                <XCircle className="h-8 w-8 text-red-600" />
               </div>
             </CardContent>
           </Card>
@@ -275,7 +350,7 @@ export default function Pipeline() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
               <Input
-                placeholder="Buscar por título, empresa, departamento ou responsável..."
+                placeholder="Buscar por título, empresa, departamento, responsável ou candidato..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 h-11 border-gray-200 focus:border-blue-500 focus:ring-blue-500"
@@ -295,6 +370,138 @@ export default function Pipeline() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Vacancies List in Statistics View - Grouped by Recruiter */}
+      {viewMode === "stats" && (
+        <div className="space-y-6">
+          {Object.values(groupedVacancies).length === 0 ? (
+            <Card className="shadow-sm border-gray-200">
+              <CardContent className="flex items-center justify-center h-64">
+                <div className="text-center text-muted-foreground">
+                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="font-medium">Nenhuma vaga encontrada</p>
+                  <p className="text-sm">
+                    {searchTerm || statusFilter !== "all" 
+                      ? "Tente ajustar os filtros de busca" 
+                      : "As vagas precisam ter um responsável atribuído"}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            Object.values(groupedVacancies).map(({ recruiter, vacancies }) => (
+              <Card key={recruiter.id} className="shadow-sm border-gray-200">
+                <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Users className="h-5 w-5 text-blue-600" />
+                      <div>
+                        <CardTitle className="text-lg font-semibold text-slate-800">
+                          {recruiter.name}
+                        </CardTitle>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {recruiter.email}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className="bg-blue-100 text-blue-800 text-sm">
+                      {vacancies.length} {vacancies.length === 1 ? 'vaga' : 'vagas'}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-6">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="font-semibold">Título</TableHead>
+                        <TableHead className="font-semibold">Empresa</TableHead>
+                        <TableHead className="font-semibold">Departamento</TableHead>
+                        <TableHead className="font-semibold">Status</TableHead>
+                        <TableHead className="font-semibold">Candidatos</TableHead>
+                        <TableHead className="font-semibold">Localização</TableHead>
+                        <TableHead className="font-semibold">Criado em</TableHead>
+                        <TableHead className="text-right font-semibold">Ações</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {vacancies.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                            Nenhuma vaga encontrada com os filtros aplicados
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        vacancies.map((vacancy) => (
+                          <TableRow 
+                            key={vacancy.id}
+                            className="cursor-pointer hover:bg-gray-50"
+                            onClick={() => navigate(`/vacancies/${vacancy.id}`)}
+                          >
+                            <TableCell className="font-medium">{vacancy.title}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Building className="h-4 w-4 text-gray-400" />
+                                <span>{vacancy.company || "-"}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>{vacancy.department || "-"}</TableCell>
+                            <TableCell>
+                              <Badge 
+                                className={`text-xs ${getStatusColor(vacancy.status)}`}
+                              >
+                                <div className="flex items-center gap-1">
+                                  {getStatusIcon(vacancy.status)}
+                                  <span className="capitalize">{vacancy.status}</span>
+                                </div>
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Users className="h-4 w-4 text-gray-400" />
+                                <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                                  {vacancy.candidates_count || 0}
+                                </Badge>
+                                {vacancy.candidates && vacancy.candidates.length > 0 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    ({vacancy.candidates.length} perfis)
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <MapPin className="h-4 w-4 text-gray-400" />
+                                <span>{vacancy.location || "-"}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {formatDate(vacancy.created_at)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/vacancies/${vacancy.id}`);
+                                }}
+                                className="h-8"
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                Ver
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
+      )}
 
       {/* Kanban View */}
       {viewMode === "kanban" && (
@@ -378,6 +585,34 @@ export default function Pipeline() {
                               <span>{vacancy.candidates_count || 0}</span>
                             </div>
                           </div>
+                          
+                          {/* Show candidates (perfis) related to this vacancy */}
+                          {vacancy.candidates && vacancy.candidates.length > 0 && (
+                            <div className="pt-2 border-t border-gray-100">
+                              <p className="text-xs font-medium text-muted-foreground mb-1">
+                                Candidatos:
+                              </p>
+                              <div className="flex flex-wrap gap-1">
+                                {vacancy.candidates.slice(0, 3).map((candidate: any) => (
+                                  <Badge 
+                                    key={candidate.id}
+                                    variant="outline"
+                                    className="text-xs bg-blue-50 text-blue-700 border-blue-200"
+                                  >
+                                    {candidate.name}
+                                  </Badge>
+                                ))}
+                                {vacancy.candidates.length > 3 && (
+                                  <Badge 
+                                    variant="outline"
+                                    className="text-xs bg-gray-50 text-gray-600 border-gray-200"
+                                  >
+                                    +{vacancy.candidates.length - 3} mais
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          )}
                           
                           <div className="flex items-center gap-2 text-xs text-muted-foreground pt-1">
                             <Calendar className="h-3 w-3" />

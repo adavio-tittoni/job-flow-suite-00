@@ -66,7 +66,7 @@ export default function Auth() {
               />
             </div>
           </div>
-          <CardDescription>Sistema de Gestão de Recrutamento</CardDescription>
+          <CardDescription>CertfAI - Sistema de Gestão de Recrutamento</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">

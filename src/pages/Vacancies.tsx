@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, Edit, Trash2, Building2, MapPin, Users, DollarSign, Calendar, Trash } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Building2, MapPin, Users, DollarSign, Calendar, Trash, User } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useVacancies, type Vacancy } from "@/hooks/useVacancies";
 
@@ -31,6 +31,15 @@ const Vacancies = () => {
       (vacancy.company && vacancy.company.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   }, [vacancies, searchTerm]);
+
+  // Separate vacancies into open and closed
+  const openVacancies = useMemo(() => {
+    return filteredVacancies.filter(vacancy => vacancy.status === 'open');
+  }, [filteredVacancies]);
+
+  const closedVacancies = useMemo(() => {
+    return filteredVacancies.filter(vacancy => vacancy.status === 'closed');
+  }, [filteredVacancies]);
 
   const handleDeleteVacancy = async () => {
     if (!vacancyToDelete) return;
@@ -171,21 +180,22 @@ const Vacancies = () => {
         </div>
       )}
 
-      <Card className="shadow-lg border-gray-200">
+      {/* Container de Vagas Abertas */}
+      <Card className="shadow-lg border-gray-200 mb-6">
         <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b">
           <CardTitle className="flex items-center gap-2 text-slate-800">
             <Building2 className="h-5 w-5 text-blue-600" />
-            Lista de Vagas
-            <Badge variant="secondary" className="ml-2 text-sm bg-blue-100 text-blue-800">
-              {filteredVacancies.length} {filteredVacancies.length === 1 ? 'vaga' : 'vagas'}
+            Vagas Abertas
+            <Badge variant="secondary" className="ml-2 text-sm bg-green-100 text-green-800">
+              {openVacancies.length} {openVacancies.length === 1 ? 'vaga' : 'vagas'}
             </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {filteredVacancies.length === 0 ? (
+          {openVacancies.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground">
-                {searchTerm ? 'Nenhuma vaga encontrada com os filtros aplicados.' : 'Nenhuma vaga cadastrada.'}
+                {searchTerm ? 'Nenhuma vaga aberta encontrada com os filtros aplicados.' : 'Nenhuma vaga aberta cadastrada.'}
               </p>
             </div>
           ) : (
@@ -194,13 +204,20 @@ const Vacancies = () => {
                 <TableRow>
                   <TableHead className="w-12">
                     <Checkbox
-                      checked={selectedVacancies.length === filteredVacancies.length && filteredVacancies.length > 0}
-                      onCheckedChange={handleSelectAll}
+                      checked={selectedVacancies.length === openVacancies.length && openVacancies.length > 0 && openVacancies.every(v => selectedVacancies.includes(v.id))}
+                      onCheckedChange={() => {
+                        const allSelected = openVacancies.every(v => selectedVacancies.includes(v.id));
+                        if (allSelected) {
+                          setSelectedVacancies(prev => prev.filter(id => !openVacancies.some(v => v.id === id)));
+                        } else {
+                          setSelectedVacancies(prev => [...prev, ...openVacancies.filter(v => !prev.includes(v.id)).map(v => v.id)]);
+                        }
+                      }}
                     />
                   </TableHead>
                   <TableHead className="font-semibold text-gray-700">Título</TableHead>
                   <TableHead className="font-semibold text-gray-700">Empresa</TableHead>
-                  <TableHead className="font-semibold text-gray-700">Localização</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Recrutador</TableHead>
                   <TableHead className="font-semibold text-gray-700">Status</TableHead>
                   <TableHead className="font-semibold text-gray-700">Candidatos</TableHead>
                   <TableHead className="font-semibold text-gray-700">Salário</TableHead>
@@ -209,7 +226,7 @@ const Vacancies = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredVacancies.map((vacancy) => (
+                {openVacancies.map((vacancy) => (
                   <TableRow key={vacancy.id}>
                     <TableCell>
                       <Checkbox
@@ -228,19 +245,147 @@ const Vacancies = () => {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <MapPin className="h-4 w-4 text-gray-400" />
+                        <User className="h-4 w-4 text-gray-400" />
                         <span className="text-slate-600">
-                          {vacancy.location || "-"}
+                          {vacancy.recruiter?.name || "-"}
                         </span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <Badge 
-                        variant={vacancy.status === 'open' ? 'default' : 'secondary'}
-                        className={vacancy.status === 'open' 
-                          ? 'bg-green-100 text-green-800 border-green-200' 
-                          : 'bg-gray-100 text-gray-800 border-gray-200'
+                        variant="default"
+                        className="bg-green-100 text-green-800 border-green-200"
+                      >
+                        {vacancy.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Users className="h-4 w-4 text-gray-400" />
+                        <Badge variant="secondary" className="bg-blue-100 text-blue-800">
+                          {vacancy.candidates_count || 0}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="h-4 w-4 text-gray-400" />
+                        <span className="text-slate-600">
+                          {vacancy.salary_range || vacancy.salary ? `R$ ${vacancy.salary?.toLocaleString()}` : "-"}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-gray-400" />
+                        <span className="text-slate-600">
+                          {formatDate(vacancy.created_at)}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                         <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate(`/vacancies/${vacancy.id}`)}
+                          className="hover:bg-blue-50 hover:text-blue-600"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setVacancyToDelete(vacancy)}
+                          className="hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Container de Vagas Fechadas */}
+      <Card className="shadow-lg border-gray-200">
+        <CardHeader className="bg-gradient-to-r from-gray-50 to-slate-50 border-b">
+          <CardTitle className="flex items-center gap-2 text-slate-800">
+            <Building2 className="h-5 w-5 text-gray-600" />
+            Vagas Fechadas
+            <Badge variant="secondary" className="ml-2 text-sm bg-gray-100 text-gray-800">
+              {closedVacancies.length} {closedVacancies.length === 1 ? 'vaga' : 'vagas'}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {closedVacancies.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">
+                {searchTerm ? 'Nenhuma vaga fechada encontrada com os filtros aplicados.' : 'Nenhuma vaga fechada cadastrada.'}
+              </p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader className="bg-gray-50">
+                <TableRow>
+                  <TableHead className="w-12">
+                    <Checkbox
+                      checked={selectedVacancies.length === closedVacancies.length && closedVacancies.length > 0 && closedVacancies.every(v => selectedVacancies.includes(v.id))}
+                      onCheckedChange={() => {
+                        const allSelected = closedVacancies.every(v => selectedVacancies.includes(v.id));
+                        if (allSelected) {
+                          setSelectedVacancies(prev => prev.filter(id => !closedVacancies.some(v => v.id === id)));
+                        } else {
+                          setSelectedVacancies(prev => [...prev, ...closedVacancies.filter(v => !prev.includes(v.id)).map(v => v.id)]);
                         }
+                      }}
+                    />
+                  </TableHead>
+                  <TableHead className="font-semibold text-gray-700">Título</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Empresa</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Recrutador</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Status</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Candidatos</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Salário</TableHead>
+                  <TableHead className="font-semibold text-gray-700">Criado em</TableHead>
+                  <TableHead className="text-right font-semibold text-gray-700">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {closedVacancies.map((vacancy) => (
+                  <TableRow key={vacancy.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedVacancies.includes(vacancy.id)}
+                        onCheckedChange={() => handleSelectVacancy(vacancy.id)}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">{vacancy.title}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-gray-400" />
+                        <span className="text-slate-700">
+                          {vacancy.company || "-"}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 text-gray-400" />
+                        <span className="text-slate-600">
+                          {vacancy.recruiter?.name || "-"}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge 
+                        variant="secondary"
+                        className="bg-gray-100 text-gray-800 border-gray-200"
                       >
                         {vacancy.status}
                       </Badge>
