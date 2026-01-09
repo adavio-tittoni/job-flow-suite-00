@@ -38,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCandidateRequirementStatus, type RequirementStatus, type RequirementStatusResult } from "@/hooks/useCandidateRequirementStatus";
 import { useN8nWebhookListener } from "@/hooks/useN8nWebhookListener";
 import { useQueryClient } from "@tanstack/react-query";
+import { useDocumentComparisons } from "@/hooks/useDocumentComparisons";
 
 interface CandidateDocumentsTabProps {
   candidateId: string;
@@ -73,6 +74,9 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
 
   // Get requirement status for pending items
   const { data: requirementStatus } = useCandidateRequirementStatus(candidateId);
+  
+  // Get document comparisons to check if documents have been compared
+  const { data: documentComparisonsData } = useDocumentComparisons(candidateId);
 
   // Fetch candidate matrix_id and listen for changes
   useEffect(() => {
@@ -725,6 +729,35 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     }
   };
 
+  // Get comparison status for a document
+  const getComparisonStatus = (documentId: string): string | null => {
+    if (!documentComparisonsData?.comparisons) return null;
+    
+    const comparison = documentComparisonsData.comparisons.find(
+      (comp) => comp.candidate_document_id === documentId
+    );
+    
+    return comparison?.status || null;
+  };
+
+  // Get comparison status badge
+  const getComparisonStatusBadge = (status: string | null) => {
+    if (!status) {
+      return <Badge variant="outline">Não Comparado</Badge>;
+    }
+    
+    switch (status) {
+      case 'CONFERE':
+        return <Badge className="bg-green-100 text-green-800">Confere</Badge>;
+      case 'PARCIAL':
+        return <Badge className="bg-yellow-100 text-yellow-800">Parcial</Badge>;
+      case 'PENDENTE':
+        return <Badge className="bg-red-100 text-red-800">Pendente</Badge>;
+      default:
+        return <Badge variant="outline">Não Comparado</Badge>;
+    }
+  };
+
   // Pré-gerar URLs assinadas e atualizar periodicamente
   useEffect(() => {
     refreshAllSignedUrls();
@@ -1109,6 +1142,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                       <TableHead>Modalidade</TableHead>
                       <TableHead>Data Emissão</TableHead>
                       <TableHead>Data Validade</TableHead>
+                      <TableHead>Validade Status</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Ações</TableHead>
                     </TableRow>
@@ -1130,6 +1164,9 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                     </TableCell>
                      <TableCell>
                        {getExpiryStatus(document.expiry_date)}
+                     </TableCell>
+                     <TableCell>
+                       {getComparisonStatusBadge(getComparisonStatus(document.id))}
                      </TableCell>
                     <TableCell>
                       <div className="flex gap-2">

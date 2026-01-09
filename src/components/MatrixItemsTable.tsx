@@ -631,7 +631,6 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="Presencial">Presencial</SelectItem>
-                              <SelectItem value="Online">Online</SelectItem>
                               <SelectItem value="Híbrido">Híbrido</SelectItem>
                               <SelectItem value="EAD">EAD</SelectItem>
                               <SelectItem value="N/A">N/A</SelectItem>
