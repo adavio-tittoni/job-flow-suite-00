@@ -17,14 +17,15 @@ export interface DocumentCatalog {
   categoria?: string;
   codigo?: string;
   sigla?: string;
+  sigla_ingles?: string;
   nome_curso?: string;
   descricao_curso?: string;
   carga_horaria?: string;
   validade?: string;
   detalhes?: string;
-  url_site?: string;
-  flag_requisito?: string;
   nome_ingles?: string;
+  reciclagem?: string;
+  equivalente?: string;
 }
 
 export function useDocumentsCatalog() {
@@ -48,11 +49,19 @@ export function useCreateDocument() {
 
   return useMutation({
     mutationFn: async (document: Omit<DocumentCatalog, "id" | "created_at">) => {
+      // Remover campos undefined para evitar problemas no banco
+      const cleanDocument = Object.fromEntries(
+        Object.entries(document).filter(([_, value]) => value !== undefined)
+      ) as Omit<DocumentCatalog, "id" | "created_at">;
+
       const { error } = await supabase
         .from("documents_catalog")
-        .insert(document);
+        .insert(cleanDocument);
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro ao criar documento:", error);
+        throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["documents-catalog"] });
@@ -65,12 +74,36 @@ export function useUpdateDocument() {
 
   return useMutation({
     mutationFn: async ({ id, ...document }: Partial<DocumentCatalog> & { id: string }) => {
-      const { error } = await supabase
-        .from("documents_catalog")
-        .update(document)
-        .eq("id", id);
+      console.log("Atualizando documento ID:", id);
+      console.log("Dados recebidos para atualização:", document);
+      
+      // Remover campos undefined para evitar problemas no banco
+      // Mas manter campos que são strings vazias para permitir limpar campos
+      const cleanDocument = Object.fromEntries(
+        Object.entries(document).filter(([_, value]) => value !== undefined)
+      ) as Partial<DocumentCatalog>;
 
-      if (error) throw error;
+      console.log("Dados limpos para atualização:", cleanDocument);
+
+      const { data, error } = await supabase
+        .from("documents_catalog")
+        .update(cleanDocument)
+        .eq("id", id)
+        .select();
+
+      if (error) {
+        console.error("Erro ao atualizar documento:", error);
+        console.error("Detalhes do erro:", {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
+      
+      console.log("Documento atualizado com sucesso:", data);
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["documents-catalog"] });
@@ -83,12 +116,25 @@ export function useDeleteDocument() {
 
   return useMutation({
     mutationFn: async (id: string) => {
+      console.log("Deletando documento ID:", id);
+      
       const { error } = await supabase
         .from("documents_catalog")
         .delete()
         .eq("id", id);
 
-      if (error) throw error;
+      if (error) {
+        console.error("Erro ao deletar documento:", error);
+        console.error("Detalhes do erro:", {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
+      
+      console.log("Documento deletado com sucesso");
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["documents-catalog"] });

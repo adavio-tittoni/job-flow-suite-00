@@ -274,9 +274,16 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">
-                          <div className="font-medium">{doc.documentName}</div>
+                          <div className="flex flex-col gap-1">
+                            <div className="font-medium">{doc.documentName}</div>
+                            {doc.documentNameEnglish && (
+                              <Badge variant="outline" className="w-fit text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                {doc.documentNameEnglish}
+                              </Badge>
+                            )}
+                          </div>
                           {doc.candidateDocument && (
-                            <div className="text-muted-foreground text-xs">
+                            <div className="text-muted-foreground text-xs mt-1">
                               Candidato: {doc.candidateDocument.name}
                             </div>
                           )}

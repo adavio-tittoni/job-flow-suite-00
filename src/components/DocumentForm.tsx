@@ -24,14 +24,15 @@ const documentSchema = z.object({
   categoria: z.string().min(1, "Categoria é obrigatória"),
   codigo: z.string().optional(),
   sigla: z.string().optional(),
+  sigla_ingles: z.string().optional(),
   nome_curso: z.string().min(1, "Nome do curso é obrigatório"),
   descricao_curso: z.string().optional(),
   carga_horaria: z.string().optional(),
   validade: z.string().optional(),
   detalhes: z.string().optional(),
-  url_site: z.string().optional(),
-  flag_requisito: z.string().optional(),
   nome_ingles: z.string().optional(),
+  reciclagem: z.string().optional(),
+  equivalente: z.string().optional(),
 });
 
 type DocumentFormData = z.infer<typeof documentSchema>;
@@ -65,18 +66,33 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
       categoria: document?.categoria || "",
       codigo: document?.codigo || "",
       sigla: document?.sigla || "",
+      sigla_ingles: document?.sigla_ingles || "",
       nome_curso: document?.nome_curso || "",
       descricao_curso: document?.descricao_curso || "",
       carga_horaria: document?.carga_horaria || "",
       validade: document?.validade || "",
       detalhes: document?.detalhes || "",
-      url_site: document?.url_site || "",
-      flag_requisito: document?.flag_requisito || "",
       nome_ingles: document?.nome_ingles || "",
+      reciclagem: document?.reciclagem || "",
+      equivalente: document?.equivalente || "",
     },
   });
 
   const onSubmit = async (data: DocumentFormData) => {
+    console.log("Formulário submetido com dados:", data);
+    
+    // Verificar validação do formulário
+    const isValid = await form.trigger();
+    if (!isValid) {
+      console.error("Formulário inválido:", form.formState.errors);
+      toast({
+        title: "Erro de validação",
+        description: "Por favor, preencha todos os campos obrigatórios.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Verificar se é uma criação e se já existe documento com o mesmo nome
     if (!document) {
       const documentName = data.nome_curso || data.name || '';
@@ -95,29 +111,136 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
     try {
       // Garantir que o campo 'name' esteja preenchido para compatibilidade com busca e exibição
       // Se name estiver vazio, usar nome_curso como fallback
-      const documentData = {
+      const documentData: any = {
         ...data,
         name: data.name || data.nome_curso || "",
-        // Também garantir que sigla_documento seja preenchido se sigla estiver preenchido
-        sigla_documento: data.sigla_documento || data.sigla || undefined,
       };
+      
+      // Adicionar sigla_documento apenas se sigla estiver preenchido
+      if (data.sigla && data.sigla.trim() !== '') {
+        documentData.sigla_documento = data.sigla_documento || data.sigla;
+      }
+
+      // Remover campos undefined para evitar problemas no banco
+      // Manter campos obrigatórios mesmo se vazios (name, categoria, nome_curso)
+      const cleanDocumentData: any = {};
+      
+      // Campos obrigatórios sempre devem ser mantidos
+      cleanDocumentData.name = documentData.name || "";
+      cleanDocumentData.categoria = documentData.categoria || "";
+      cleanDocumentData.nome_curso = documentData.nome_curso || "";
+      
+      // Adicionar outros campos apenas se tiverem valor
+      // Separar campos novos (que podem não existir no banco) dos campos existentes
+      const existingOptionalFields: (keyof typeof documentData)[] = [
+        'group_name', 'document_category', 'document_type', 'issuing_authority', 
+        'modality', 'codigo', 'sigla', 'descricao_curso', 
+        'carga_horaria', 'validade', 'detalhes', 'nome_ingles', 
+        'sigla_documento'
+      ];
+      
+      const newOptionalFields: (keyof typeof documentData)[] = [
+        'sigla_ingles', 'reciclagem', 'equivalente'
+      ];
+      
+      // Adicionar campos existentes (incluir mesmo se vazio para permitir limpar campos)
+      existingOptionalFields.forEach(field => {
+        const value = documentData[field];
+        if (value !== undefined && value !== null) {
+          cleanDocumentData[field] = value;
+        }
+      });
+      
+      // Adicionar novos campos
+      newOptionalFields.forEach(field => {
+        const value = documentData[field];
+        if (value !== undefined && value !== null) {
+          cleanDocumentData[field] = value;
+        }
+      });
+
+      console.log("Dados limpos a serem enviados:", cleanDocumentData);
 
       if (document) {
-        await updateDocument.mutateAsync({ id: document.id, ...documentData });
+        await updateDocument.mutateAsync({ id: document.id, ...cleanDocumentData });
         toast({
           title: "Documento atualizado com sucesso!",
         });
       } else {
-        await createDocument.mutateAsync(documentData);
+        await createDocument.mutateAsync(cleanDocumentData);
         toast({
           title: "Documento criado com sucesso!",
         });
       }
       onClose();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Erro ao salvar documento:", error);
+      console.error("Dados originais:", data);
+      
+      let errorMessage = "Tente novamente.";
+      
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.error?.message) {
+        errorMessage = error.error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      
+      // Verificar se o erro é relacionado a colunas inexistentes
+      const isColumnError = errorMessage.includes('column') || 
+                           errorMessage.includes('sigla_ingles') || 
+                           errorMessage.includes('reciclagem') || 
+                           errorMessage.includes('equivalente') ||
+                           errorMessage.includes('Could not find');
+      
+      if (isColumnError) {
+        // Tentar salvar novamente sem os novos campos
+        try {
+          const fallbackData: any = {
+            name: cleanDocumentData.name,
+            categoria: cleanDocumentData.categoria,
+            nome_curso: cleanDocumentData.nome_curso,
+          };
+          
+          // Adicionar apenas campos que sabemos que existem
+          const safeFields = ['group_name', 'document_category', 'document_type', 'issuing_authority', 
+                            'modality', 'codigo', 'sigla', 'descricao_curso', 
+                            'carga_horaria', 'validade', 'detalhes', 'nome_ingles', 'sigla_documento'];
+          
+          safeFields.forEach(field => {
+            if (cleanDocumentData[field] !== undefined) {
+              fallbackData[field] = cleanDocumentData[field];
+            }
+          });
+          
+          if (document) {
+            await updateDocument.mutateAsync({ id: document.id, ...fallbackData });
+            toast({
+              title: "Documento atualizado (sem novos campos)",
+              description: "O documento foi salvo, mas os campos 'sigla_ingles', 'reciclagem' e 'equivalente' foram ignorados porque não existem no banco. Execute a migration para habilitá-los.",
+              variant: "default",
+            });
+            onClose();
+            return;
+          } else {
+            await createDocument.mutateAsync(fallbackData);
+            toast({
+              title: "Documento criado (sem novos campos)",
+              description: "O documento foi salvo, mas os campos 'sigla_ingles', 'reciclagem' e 'equivalente' foram ignorados porque não existem no banco. Execute a migration para habilitá-los.",
+              variant: "default",
+            });
+            onClose();
+            return;
+          }
+        } catch (fallbackError: any) {
+          errorMessage = "As colunas 'sigla_ingles', 'reciclagem' ou 'equivalente' não existem no banco de dados. Por favor, execute a migration 20250117000001_add_document_fields.sql no Supabase. Erro: " + (fallbackError?.message || 'Desconhecido');
+        }
+      }
+      
       toast({
         title: "Erro ao salvar documento",
-        description: "Tente novamente.",
+        description: errorMessage,
         variant: "destructive",
       });
     }
@@ -138,7 +261,7 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
   return (
     <>
-      <div className="max-h-96 overflow-y-auto">
+      <div className="overflow-y-auto">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -186,12 +309,40 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
+                name="sigla_ingles"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Sigla em Inglês</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ex: OOW, BST, CBSP" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
                 name="nome_curso"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Nome do Curso *</FormLabel>
                     <FormControl>
                       <Input placeholder="Ex: Oficial de Quarto de Navegação" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="nome_ingles"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nome do Curso em Inglês</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Ex: Officer in Charge of a Navigational Watch" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -242,12 +393,12 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
-                name="url_site"
+                name="reciclagem"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>URL do Site</FormLabel>
+                    <FormLabel>Reciclagem</FormLabel>
                     <FormControl>
-                      <Input placeholder="https://exemplo.com" {...field} />
+                      <Input placeholder="Ex: códigos ou siglas de reciclagem" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -256,26 +407,12 @@ export function DocumentForm({ document, onClose }: DocumentFormProps) {
 
               <FormField
                 control={form.control}
-                name="flag_requisito"
+                name="equivalente"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Flag Requisito</FormLabel>
+                    <FormLabel>Equivalente</FormLabel>
                     <FormControl>
-                      <Input placeholder="Ex: sim, não, sempre, depende" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="nome_ingles"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Nome em Inglês</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Ex: Officer in Charge of a Navigational Watch" {...field} />
+                      <Input placeholder="Ex: códigos ou siglas equivalentes" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

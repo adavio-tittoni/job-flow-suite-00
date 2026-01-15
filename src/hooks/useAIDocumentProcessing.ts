@@ -933,7 +933,10 @@ export const useAIDocumentProcessing = () => {
             document_category,
             document_type,
             group_name,
-            categoria
+            categoria,
+            sigla_ingles,
+            nome_ingles,
+            equivalente
           )
         `)
         .eq('matrix_id', candidate.matrix_id);

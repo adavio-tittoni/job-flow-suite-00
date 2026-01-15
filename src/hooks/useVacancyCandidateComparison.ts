@@ -20,6 +20,7 @@ interface VacancyCandidateComparison {
 interface VacancyDocumentComparison {
   requirementId: string;
   documentName: string;
+  documentNameEnglish?: string; // Nome do documento em inglês
   documentCode: string;
   sigla?: string; // Sigla do documento (mesmo formato que EnhancedDocumentsView)
   category: string;
@@ -292,6 +293,7 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             id,
             name,
             nome_curso,
+            nome_ingles,
             codigo,
             sigla,
             sigla_documento,
@@ -388,6 +390,7 @@ export const useVacancyCandidateComparison = (vacancyId: string) => {
             requirementId: matrixItem.id,
             // Usar nome_curso se disponível, senão usar name (compatibilidade com documentos antigos e novos)
             documentName: catalogDoc.nome_curso || catalogDoc.name || '',
+            documentNameEnglish: catalogDoc.nome_ingles || undefined,
             documentCode: catalogDoc.codigo || '',
             // Usar sigla_documento se disponível, senão usar sigla (compatibilidade com documentos antigos e novos)
             sigla: catalogDoc.sigla_documento || catalogDoc.sigla || '',

@@ -61,10 +61,12 @@ export default function Documents() {
         title: "Documento excluído",
         description: "O documento foi excluído com sucesso.",
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Erro ao excluir documento:", error);
+      const errorMessage = error?.message || error?.error?.message || "Ocorreu um erro ao excluir o documento.";
       toast({
         title: "Erro",
-        description: "Ocorreu um erro ao excluir o documento.",
+        description: errorMessage,
         variant: "destructive",
       });
     }
@@ -85,10 +87,12 @@ export default function Documents() {
       
       // Forçar refetch dos dados para garantir atualização da UI
       await refetch();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Erro ao excluir documentos:", error);
+      const errorMessage = error?.message || error?.error?.message || "Ocorreu um erro ao excluir os documentos.";
       toast({
         title: "Erro",
-        description: "Ocorreu um erro ao excluir os documentos.",
+        description: errorMessage,
         variant: "destructive",
       });
     }
@@ -201,7 +205,7 @@ export default function Documents() {
                 Novo Documento
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {selectedDocument ? "Editar Documento" : "Novo Documento"}
@@ -307,8 +311,26 @@ export default function Documents() {
                     <Badge variant="secondary">{document.categoria || document.group_name || "-"}</Badge>
                   </TableCell>
                   <TableCell>{document.codigo || "-"}</TableCell>
-                  <TableCell>{document.sigla || document.sigla_documento || "-"}</TableCell>
-                  <TableCell className="font-medium">{document.nome_curso || document.name || "-"}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <span>{document.sigla || document.sigla_documento || "-"}</span>
+                      {document.sigla_ingles && (
+                        <Badge variant="outline" className="w-fit text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          {document.sigla_ingles}
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex flex-col gap-1">
+                      <span>{document.nome_curso || document.name || "-"}</span>
+                      {document.nome_ingles && (
+                        <Badge variant="outline" className="w-fit text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          {document.nome_ingles}
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>{document.carga_horaria || "-"}</TableCell>
                   <TableCell>{document.validade || "-"}</TableCell>
                   <TableCell>{document.modalidade || "-"}</TableCell>
