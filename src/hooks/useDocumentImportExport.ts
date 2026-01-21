@@ -16,14 +16,15 @@ export interface DocumentImportData {
   categoria: string;
   codigo?: string;
   sigla?: string;
+  sigla_ingles?: string;
   nome_curso: string;
   descricao_curso?: string;
   carga_horaria?: string;
   validade?: string;
   detalhes?: string;
-  url_site?: string;
-  flag_requisito?: string;
   nome_ingles?: string;
+  reciclagem?: string;
+  equivalente?: string;
 }
 
 export interface ImportResult {
@@ -51,41 +52,44 @@ export function useDocumentImportExport() {
           'categoria',
           'codigo',
           'sigla',
+          'sigla_ingles',
           'nome_curso',
+          'nome_ingles',
           'descricao_curso',
           'carga_horaria',
           'validade',
           'modalidade',
           'detalhes',
-          'url_site',
-          'flag_requisito',
-          'nome_ingles'
+          'reciclagem',
+          'equivalente'
         ],
         [
           'CoC (Competência)',
           'A-II/1',
           'COCN',
+          'OOW',
           'Oficial de Quarto de Navegação (Convés)',
+          'Officer in Charge of a Navigational Watch',
           'Licença para atuar como oficial de navegação',
           '40 h',
           '5 anos',
           'Presencial',
           'Requer flag state',
-          'https://exemplo.com',
-          'sim',
-          'Officer in Charge of a Navigational Watch'
+          '',
+          ''
         ],
         [
           'Segurança e Saúde Ocupacional',
           'NR-1',
           '',
+          '',
           'Disposições Gerais e GRO/PGR',
+          '',
           'Capacitação conforme riscos',
           '8 h',
           'Conforme PGR',
           'Híbrido',
           'Parte teórica pode ser EAD',
-          '',
           '',
           ''
         ],
@@ -93,13 +97,14 @@ export function useDocumentImportExport() {
           'EPI',
           'NR-6',
           '',
+          '',
           'Equipamentos de Proteção Individual',
+          '',
           'Uso, conservação e registro de EPIs',
           '4 h',
           '1-2 anos',
           'Presencial',
           'Deve incluir prática simulada',
-          '',
           '',
           ''
         ]
@@ -136,41 +141,44 @@ export function useDocumentImportExport() {
           'categoria',
           'codigo',
           'sigla',
+          'sigla_ingles',
           'nome_curso',
+          'nome_ingles',
           'descricao_curso',
           'carga_horaria',
           'validade',
           'modalidade',
           'detalhes',
-          'url_site',
-          'flag_requisito',
-          'nome_ingles'
+          'reciclagem',
+          'equivalente'
         ],
         [
           'CoC (Competência)',
           'A-II/1',
           'COCN',
+          'OOW',
           'Oficial de Quarto de Navegação (Convés)',
+          'Officer in Charge of a Navigational Watch',
           'Licença para atuar como oficial de navegação',
           '40 h',
           '5 anos',
           'Presencial',
           'Requer flag state',
-          'https://exemplo.com',
-          'sim',
-          'Officer in Charge of a Navigational Watch'
+          '',
+          ''
         ],
         [
           'Segurança e Saúde Ocupacional',
           'NR-1',
           '',
+          '',
           'Disposições Gerais e GRO/PGR',
+          '',
           'Capacitação conforme riscos',
           '8 h',
           'Conforme PGR',
           'Híbrido',
           'Parte teórica pode ser EAD',
-          '',
           '',
           ''
         ],
@@ -178,13 +186,14 @@ export function useDocumentImportExport() {
           'EPI',
           'NR-6',
           '',
+          '',
           'Equipamentos de Proteção Individual',
+          '',
           'Uso, conservação e registro de EPIs',
           '4 h',
           '1-2 anos',
           'Presencial',
           'Deve incluir prática simulada',
-          '',
           '',
           ''
         ],
@@ -192,13 +201,14 @@ export function useDocumentImportExport() {
           'Saúde Ocupacional / Primeiros Socorros',
           'NR-7',
           '',
+          '',
           'Primeiros Socorros (no âmbito do PCMSO)',
+          '',
           'Atendimento básico de emergência médica',
           '8-16 h',
           '2 anos',
           'Presencial',
           'Com instrutor habilitado',
-          '',
           '',
           ''
         ]
@@ -257,29 +267,31 @@ export function useDocumentImportExport() {
           'categoria',
           'codigo',
           'sigla',
+          'sigla_ingles',
           'nome_curso',
+          'nome_ingles',
           'descricao_curso',
           'carga_horaria',
           'validade',
           'modalidade',
           'detalhes',
-          'url_site',
-          'flag_requisito',
-          'nome_ingles'
+          'reciclagem',
+          'equivalente'
         ],
         ...documents.map(doc => [
           doc.categoria || '',
           doc.codigo || '',
           doc.sigla || '',
+          doc.sigla_ingles || '',
           doc.nome_curso || doc.name || '',
+          doc.nome_ingles || '',
           doc.descricao_curso || '',
           doc.carga_horaria || '',
           doc.validade || '',
           doc.modalidade || '',
           doc.detalhes || '',
-          doc.url_site || '',
-          doc.flag_requisito || '',
-          doc.nome_ingles || ''
+          doc.reciclagem || '',
+          doc.equivalente || ''
         ])
       ];
 
@@ -336,15 +348,16 @@ export function useDocumentImportExport() {
         'categoria': doc.categoria || '',
         'codigo': doc.codigo || '',
         'sigla': doc.sigla || '',
+        'sigla_ingles': doc.sigla_ingles || '',
         'nome_curso': doc.nome_curso || doc.name || '',
+        'nome_ingles': doc.nome_ingles || '',
         'descricao_curso': doc.descricao_curso || '',
         'carga_horaria': doc.carga_horaria || '',
         'validade': doc.validade || '',
         'modalidade': doc.modalidade || '',
         'detalhes': doc.detalhes || '',
-        'url_site': doc.url_site || '',
-        'flag_requisito': doc.flag_requisito || '',
-        'nome_ingles': doc.nome_ingles || ''
+        'reciclagem': doc.reciclagem || '',
+        'equivalente': doc.equivalente || ''
       }));
 
       // Criar workbook
@@ -356,15 +369,16 @@ export function useDocumentImportExport() {
         { wch: 25 }, // categoria
         { wch: 15 }, // codigo
         { wch: 10 }, // sigla
+        { wch: 15 }, // sigla_ingles
         { wch: 40 }, // nome_curso
+        { wch: 40 }, // nome_ingles
         { wch: 50 }, // descricao_curso
         { wch: 15 }, // carga_horaria
         { wch: 15 }, // validade
         { wch: 15 }, // modalidade
         { wch: 40 }, // detalhes
-        { wch: 30 }, // url_site
-        { wch: 15 }, // flag_requisito
-        { wch: 40 }  // nome_ingles
+        { wch: 20 }, // reciclagem
+        { wch: 20 }  // equivalente
       ];
       worksheet['!cols'] = columnWidths;
       
@@ -622,8 +636,17 @@ export function useDocumentImportExport() {
           if (document.codigo && document.codigo.trim() !== '') {
             insertData.codigo = document.codigo;
           }
+          if (document.sigla && document.sigla.trim() !== '') {
+            insertData.sigla = document.sigla;
+          }
+          if (document.sigla_ingles && document.sigla_ingles.trim() !== '') {
+            insertData.sigla_ingles = document.sigla_ingles;
+          }
           if (document.nome_curso && document.nome_curso.trim() !== '') {
             insertData.nome_curso = document.nome_curso;
+          }
+          if (document.nome_ingles && document.nome_ingles.trim() !== '') {
+            insertData.nome_ingles = document.nome_ingles;
           }
           if (document.descricao_curso && document.descricao_curso.trim() !== '') {
             insertData.descricao_curso = document.descricao_curso;
@@ -637,14 +660,11 @@ export function useDocumentImportExport() {
           if (document.detalhes && document.detalhes.trim() !== '') {
             insertData.detalhes = document.detalhes;
           }
-          if (document.url_site && document.url_site.trim() !== '') {
-            insertData.url_site = document.url_site;
+          if (document.reciclagem && document.reciclagem.trim() !== '') {
+            insertData.reciclagem = document.reciclagem;
           }
-          if (document.flag_requisito && document.flag_requisito.trim() !== '') {
-            insertData.flag_requisito = document.flag_requisito;
-          }
-          if (document.nome_ingles && document.nome_ingles.trim() !== '') {
-            insertData.nome_ingles = document.nome_ingles;
+          if (document.equivalente && document.equivalente.trim() !== '') {
+            insertData.equivalente = document.equivalente;
           }
 
           console.log(`Inserindo dados na linha ${rowNumber}:`, insertData);

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Trash2, Edit } from "lucide-react";
+import { Plus, Trash2, Edit, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,10 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useMatrixItems, useCreateMatrixItem, useUpdateMatrixItem, useDeleteMatrixItem, type MatrixItem } from "@/hooks/useMatrix";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 const matrixItemSchema = z.object({
   document_id: z.string().min(1, "Documento é obrigatório"),
@@ -33,7 +35,16 @@ interface Document {
   sigla_documento?: string;
   codigo?: string;
   sigla?: string;
+  sigla_ingles?: string;
   nome_curso?: string;
+  nome_ingles?: string;
+  descricao_curso?: string;
+  carga_horaria?: string;
+  validade?: string;
+  modalidade?: string;
+  reciclagem?: string;
+  equivalente?: string;
+  group_name?: string;
 }
 
 interface MatrixItemsFormProps {
@@ -44,10 +55,17 @@ interface MatrixItemsFormProps {
 
 export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormProps) => {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([]);
+  const [displayedDocuments, setDisplayedDocuments] = useState<Document[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showDocumentSelector, setShowDocumentSelector] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingItem, setEditingItem] = useState<MatrixItem | null>(null);
+  const [page, setPage] = useState(1);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const itemsPerPage = 50;
 
   const { data: matrixItems = [], isLoading } = useMatrixItems(matrixId);
   const createMatrixItem = useCreateMatrixItem();
@@ -80,15 +98,65 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
       const { data, error } = await supabase
         .from('documents_catalog')
         .select('*')
-        .order('name');
+        .order('nome_curso', { ascending: true, nullsFirst: false })
+        .order('name', { ascending: true, nullsFirst: false });
       
       if (!error && data) {
         setDocuments(data);
+        setFilteredDocuments(data);
       }
     };
     
     loadDocuments();
   }, []);
+
+  // Filter documents based on search term
+  useEffect(() => {
+    if (!searchTerm) {
+      setFilteredDocuments(documents);
+    } else {
+      const searchLower = searchTerm.toLowerCase();
+      const filtered = documents.filter(doc => {
+        const name = (doc.name || doc.nome_curso || "").toLowerCase();
+        const categoria = (doc.categoria || "").toLowerCase();
+        const siglaDoc = (doc.sigla_documento || doc.sigla || "").toLowerCase();
+        const siglaIngles = (doc.sigla_ingles || "").toLowerCase();
+        const codigo = (doc.codigo || "").toLowerCase();
+        const nomeCurso = (doc.nome_curso || "").toLowerCase();
+        const nomeIngles = (doc.nome_ingles || "").toLowerCase();
+        const descricao = (doc.descricao_curso || "").toLowerCase();
+        const grupo = (doc.group_name || "").toLowerCase();
+        const reciclagem = (doc.reciclagem || "").toLowerCase();
+        const equivalente = (doc.equivalente || "").toLowerCase();
+        
+        return name.includes(searchLower) ||
+          categoria.includes(searchLower) ||
+          siglaDoc.includes(searchLower) ||
+          siglaIngles.includes(searchLower) ||
+          codigo.includes(searchLower) ||
+          nomeCurso.includes(searchLower) ||
+          nomeIngles.includes(searchLower) ||
+          descricao.includes(searchLower) ||
+          grupo.includes(searchLower) ||
+          reciclagem.includes(searchLower) ||
+          equivalente.includes(searchLower);
+      });
+      setFilteredDocuments(filtered);
+    }
+  }, [searchTerm, documents]);
+
+  // Reset page when search term changes
+  useEffect(() => {
+    setPage(1);
+    setDisplayedDocuments([]);
+  }, [searchTerm]);
+
+  // Update displayed documents based on pagination
+  useEffect(() => {
+    const startIndex = 0;
+    const endIndex = page * itemsPerPage;
+    setDisplayedDocuments(filteredDocuments.slice(startIndex, endIndex));
+  }, [filteredDocuments, page]);
 
   // Reset form when dialog opens
   useEffect(() => {
@@ -239,42 +307,45 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
                       name="document_id"
                       control={control}
                       render={({ field }) => (
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecionar documento..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <ScrollArea className="h-48">
-                              {documents.map((doc) => (
-                                <SelectItem key={doc.id} value={doc.id}>
-                                  <div className="flex flex-col">
-                                    <div className="flex items-center gap-2">
-                                      <span>{doc.name || doc.nome_curso}</span>
-                                      {doc.sigla && (
-                                        <Badge variant="outline" className="text-xs">
-                                          {doc.sigla}
-                                        </Badge>
-                                      )}
-                                      {doc.sigla_documento && (
-                                        <Badge variant="outline" className="text-xs">
-                                          {doc.sigla_documento}
-                                        </Badge>
-                                      )}
-                                      {doc.codigo && (
-                                        <Badge variant="secondary" className="text-xs">
-                                          {doc.codigo}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <span className="text-sm text-muted-foreground">
-                                      {doc.categoria}
-                                    </span>
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </ScrollArea>
-                          </SelectContent>
-                        </Select>
+                        <div className="space-y-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-start"
+                            onClick={() => setShowDocumentSelector(true)}
+                          >
+                            {field.value ? (
+                              <span className="truncate">
+                                {documents.find(d => d.id === field.value)?.nome_curso || 
+                                 documents.find(d => d.id === field.value)?.name || 
+                                 "Documento selecionado"}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">Selecionar documento...</span>
+                            )}
+                          </Button>
+                          {field.value && (
+                            <div className="text-xs text-muted-foreground">
+                              {documents.find(d => d.id === field.value)?.categoria && (
+                                <Badge variant="outline" className="text-xs mr-2">
+                                  {documents.find(d => d.id === field.value)?.categoria}
+                                </Badge>
+                              )}
+                              {documents.find(d => d.id === field.value)?.codigo && (
+                                <Badge variant="secondary" className="text-xs mr-2">
+                                  {documents.find(d => d.id === field.value)?.codigo}
+                                </Badge>
+                              )}
+                              {(documents.find(d => d.id === field.value)?.sigla || 
+                                documents.find(d => d.id === field.value)?.sigla_documento) && (
+                                <Badge variant="outline" className="text-xs">
+                                  {documents.find(d => d.id === field.value)?.sigla || 
+                                   documents.find(d => d.id === field.value)?.sigla_documento}
+                                </Badge>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       )}
                     />
                     {errors.document_id && (
@@ -448,6 +519,208 @@ export const MatrixItemsForm = ({ matrixId, isOpen, onClose }: MatrixItemsFormPr
               <Button variant="outline" onClick={handleClose}>
                 Fechar
               </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Selector Modal */}
+      <Dialog open={showDocumentSelector} onOpenChange={setShowDocumentSelector}>
+        <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-xl">📄 Selecionar Documento</DialogTitle>
+          </DialogHeader>
+          
+          <div className="flex flex-col flex-1 min-h-0 space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+              <Input
+                placeholder="Buscar por documento, categoria, código, sigla..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            
+            <div className="flex-1 border rounded-lg overflow-auto" 
+                 onScroll={(e) => {
+                   const target = e.target as HTMLElement;
+                   const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+                   if (scrollBottom < 100 && !isLoadingMore && displayedDocuments.length < filteredDocuments.length) {
+                     setIsLoadingMore(true);
+                     setTimeout(() => {
+                       setPage(prev => prev + 1);
+                       setIsLoadingMore(false);
+                     }, 100);
+                   }
+                 }}>
+              <Table>
+                <TableHeader className="sticky top-0 bg-background z-10">
+                  <TableRow>
+                    <TableHead className="w-20">Ação</TableHead>
+                    <TableHead>Categoria</TableHead>
+                    <TableHead className="w-32">Código</TableHead>
+                    <TableHead className="w-32">Sigla</TableHead>
+                    <TableHead className="w-32">Sigla Inglês</TableHead>
+                    <TableHead>Nome do Curso</TableHead>
+                    <TableHead className="w-40">Nome Inglês</TableHead>
+                    <TableHead className="w-32">Carga Horária</TableHead>
+                    <TableHead className="w-32">Validade</TableHead>
+                    <TableHead className="w-32">Modalidade</TableHead>
+                    <TableHead className="w-32">Reciclagem</TableHead>
+                    <TableHead className="w-32">Equivalente</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredDocuments.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                        Nenhum documento encontrado
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    <>
+                      {displayedDocuments.map((doc) => (
+                      <TableRow 
+                        key={doc.id}
+                        className={cn(
+                          "hover:bg-gray-50 cursor-pointer",
+                          watch("document_id") === doc.id && "bg-blue-50"
+                        )}
+                        onClick={() => {
+                          setValue("document_id", doc.id);
+                          // Não fechar o modal, deixar o usuário fechar manualmente
+                        }}
+                      >
+                        <TableCell className="align-middle">
+                          {watch("document_id") === doc.id ? (
+                            <Badge variant="default" className="text-xs">
+                              Selecionado
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setValue("document_id", doc.id);
+                                // Não fechar o modal, deixar o usuário fechar manualmente
+                              }}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          <Badge variant="outline" className="text-xs">
+                            {doc.categoria || doc.group_name || "N/A"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.codigo ? (
+                            <Badge variant="secondary" className="text-xs whitespace-nowrap">
+                              {doc.codigo}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {(doc.sigla_documento || doc.sigla) ? (
+                            <Badge variant="outline" className="text-xs whitespace-nowrap">
+                              {doc.sigla_documento || doc.sigla}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.sigla_ingles ? (
+                            <Badge variant="outline" className="text-xs whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200">
+                              {doc.sigla_ingles}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          <div className="font-medium text-sm">{doc.nome_curso || doc.name || "Sem nome"}</div>
+                          {doc.descricao_curso && (
+                            <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              {doc.descricao_curso}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.nome_ingles ? (
+                            <div className="text-xs text-blue-700 bg-blue-50 px-2 py-1 rounded border border-blue-200">
+                              {doc.nome_ingles}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.carga_horaria ? (
+                            <span className="text-xs font-medium">{doc.carga_horaria}</span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.validade ? (
+                            <span className="text-xs">{doc.validade}</span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.modalidade ? (
+                            <Badge variant="outline" className="text-xs">
+                              {doc.modalidade}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.reciclagem ? (
+                            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200">
+                              {doc.reciclagem}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-middle">
+                          {doc.equivalente ? (
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                              {doc.equivalente}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                      ))}
+                      {displayedDocuments.length < filteredDocuments.length && (
+                        <TableRow>
+                          <TableCell colSpan={12} className="text-center py-4">
+                            {isLoadingMore ? (
+                              <span className="text-sm text-muted-foreground">Carregando mais documentos...</span>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">
+                                Mostrando {displayedDocuments.length} de {filteredDocuments.length} documentos
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </>
+                  )}
+                </TableBody>
+              </Table>
             </div>
           </div>
         </DialogContent>
