@@ -29,11 +29,11 @@ const Matrix = () => {
   const [selectedUsuario, setSelectedUsuario] = useState("");
   const [matrixToDelete, setMatrixToDelete] = useState<any>(null);
 
-  // Obter valores únicos para filtros
-  const uniqueCargos = [...new Set(matrices.map(m => m.cargo))];
-  const uniqueEmpresas = [...new Set(matrices.map(m => m.empresa))];
-  const uniqueSolicitados = [...new Set(matrices.map(m => m.solicitado_por))];
-  const uniqueUsuarios = [...new Set(matrices.map(m => m.user_email))];
+  // Obter valores únicos para filtros (filtrando valores vazios, null ou undefined)
+  const uniqueCargos = [...new Set(matrices.map(m => m.cargo).filter(c => c && c.trim() !== ""))];
+  const uniqueEmpresas = [...new Set(matrices.map(m => m.empresa).filter(e => e && e.trim() !== ""))];
+  const uniqueSolicitados = [...new Set(matrices.map(m => m.solicitado_por).filter(s => s && s.trim() !== ""))];
+  const uniqueUsuarios = [...new Set(matrices.map(m => m.user_email).filter(u => u && u.trim() !== ""))];
 
   const handleDeleteMatrix = async () => {
     if (!matrixToDelete) return;
@@ -198,7 +198,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todos os cargos</SelectItem>
                 {uniqueCargos.map(cargo => (
-                  <SelectItem key={cargo} value={cargo}>{cargo}</SelectItem>
+                  <SelectItem key={cargo} value={cargo || "unknown"}>{cargo}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -210,7 +210,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todas as empresas</SelectItem>
                 {uniqueEmpresas.map(empresa => (
-                  <SelectItem key={empresa} value={empresa}>{empresa}</SelectItem>
+                  <SelectItem key={empresa} value={empresa || "unknown"}>{empresa}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -222,7 +222,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
                 {uniqueSolicitados.map(solicitado => (
-                  <SelectItem key={solicitado} value={solicitado}>{solicitado}</SelectItem>
+                  <SelectItem key={solicitado} value={solicitado || "unknown"}>{solicitado}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -234,7 +234,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todos os usuários</SelectItem>
                 {uniqueUsuarios.map(usuario => (
-                  <SelectItem key={usuario} value={usuario}>{usuario}</SelectItem>
+                  <SelectItem key={usuario} value={usuario || "unknown"}>{usuario}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

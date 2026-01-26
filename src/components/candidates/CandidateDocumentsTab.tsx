@@ -758,6 +758,54 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     }
   };
 
+  // Get signature status for a document
+  const getSignatureStatus = (document: CandidateDocument): string | null => {
+    // Prioridade 1: Verificar se tem selo de originalidade (QR)
+    if (document.selo_originalidade && document.selo_originalidade.trim() !== '') {
+      return 'ASS_QR';
+    }
+    
+    // Prioridade 2: Verificar assinatura do titular
+    if (document.assinatura_titular && 
+        document.assinatura_titular.trim() !== '' && 
+        document.assinatura_titular.trim().toLowerCase() !== 'não assinado') {
+      return 'ASSINADO';
+    }
+    
+    // Caso contrário: Sem assinatura
+    return 'SEM_ASS';
+  };
+
+  // Get signature status badge (smaller than comparison badge)
+  const getSignatureStatusBadge = (status: string | null) => {
+    if (!status) {
+      return null;
+    }
+    
+    switch (status) {
+      case 'ASSINADO':
+        return (
+          <Badge className="bg-green-50 text-green-700 border border-green-200 text-xs py-0.5 px-1.5">
+            Assinado
+          </Badge>
+        );
+      case 'ASS_QR':
+        return (
+          <Badge className="bg-blue-50 text-blue-700 border border-blue-200 text-xs py-0.5 px-1.5">
+            Ass_QR
+          </Badge>
+        );
+      case 'SEM_ASS':
+        return (
+          <Badge className="bg-gray-50 text-gray-700 border border-gray-200 text-xs py-0.5 px-1.5">
+            Sem_Ass
+          </Badge>
+        );
+      default:
+        return null;
+    }
+  };
+
   // Pré-gerar URLs assinadas e atualizar periodicamente
   useEffect(() => {
     refreshAllSignedUrls();
@@ -1166,7 +1214,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                        {getExpiryStatus(document.expiry_date)}
                      </TableCell>
                      <TableCell>
-                       {getComparisonStatusBadge(getComparisonStatus(document.id))}
+                       <div className="flex flex-col gap-1">
+                         {getComparisonStatusBadge(getComparisonStatus(document.id))}
+                         {getSignatureStatusBadge(getSignatureStatus(document))}
+                       </div>
                      </TableCell>
                     <TableCell>
                       <div className="flex gap-2">
