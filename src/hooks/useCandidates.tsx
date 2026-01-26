@@ -57,12 +57,6 @@ export interface CandidateDocument {
   arquivo_original?: string;
   codigo?: string; // Custom document code for matrix comparison
   tipo_de_codigo?: string; // Type of code (e.g., A-VI/3, NR-33)
-  assinatura_titular?: string;
-  assinatura_diretor_escola?: string;
-  assinatura_autoridade_maritima?: string;
-  selo_originalidade?: string;
-  carimbo_instituicao?: string;
-  carimbo_autoridade?: string;
 }
 
 export interface CandidateHistory {
