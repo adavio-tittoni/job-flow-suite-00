@@ -758,6 +758,9 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     }
   };
 
+  // Tabela inferior: mostrar apenas documentos tagados como Não Comparado
+  const documentsToShow = validDocuments.filter((doc) => getComparisonStatus(doc.id) === null);
+
   // Pré-gerar URLs assinadas e atualizar periodicamente
   useEffect(() => {
     refreshAllSignedUrls();
@@ -1125,9 +1128,9 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
         </div>
       </CardHeader>
       <CardContent>
-        {validDocuments.length === 0 ? (
+        {documentsToShow.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-muted-foreground">Nenhum documento cadastrado</p>
+            <p className="text-muted-foreground">Nenhum documento não comparado</p>
           </div>
         ) : (
           <div className="rounded-md border">
@@ -1148,7 +1151,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                     </TableRow>
                   </TableHeader>
               <TableBody>
-                {validDocuments.map((document) => (
+                {documentsToShow.map((document) => (
                   <TableRow key={document.id}>
                      <TableCell>{document.document_category || "-"}</TableCell>
                      <TableCell>{document.sigla_documento || "N/A"}</TableCell>

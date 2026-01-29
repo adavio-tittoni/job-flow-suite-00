@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Save, User, Key } from "lucide-react";
+import { logger } from "@/lib/logger";
 
 interface UserProfile {
   id: string;
@@ -82,8 +83,8 @@ const UserEditor = () => {
             role: roleData?.role || "recrutador",
           });
         }
-      } catch (error) {
-        console.error('Erro ao carregar dados:', error);
+      } catch (error: any) {
+        logger.error('Erro ao carregar dados:', { error: error.message });
         toast({
           title: "Erro",
           description: "Não foi possível carregar os dados do usuário.",
@@ -159,8 +160,7 @@ const UserEditor = () => {
 
     try {
       if (isEditing && id) {
-        console.log('💾 Salvando usuário:', { id, name: formData.name, email: formData.email });
-        console.log('💾 Dados atuais do usuário:', user);
+        logger.debug('Salvando usuario:', { id });
         
         // Update existing user
         const { data: updateResult, error: profileError, count } = await supabase
@@ -174,25 +174,25 @@ const UserEditor = () => {
           .select();
 
         if (profileError) {
-          console.error('❌ Erro ao salvar perfil:', profileError);
+          logger.error('Erro ao salvar perfil:', { error: profileError.message });
           throw profileError;
         }
 
-        console.log('✅ Resultado do update:', { updateResult, count });
+        logger.debug('Update realizado com sucesso');
         
         // Verificar se realmente atualizou
         if (updateResult && updateResult.length === 0) {
-          console.warn('⚠️ Update não afetou nenhuma linha. Verificando se o usuário existe...');
+          logger.warn('Update nao afetou nenhuma linha');
           // Verificar se o usuário existe
           const { data: checkUser } = await supabase
             .from('profiles')
             .select('id, name, email')
             .eq('id', id)
             .single();
-          console.log('👤 Usuário encontrado:', checkUser);
+          logger.debug('Usuario verificado:', { found: !!checkUser });
         }
 
-        console.log('✅ Perfil salvo com sucesso');
+        logger.debug('Perfil salvo com sucesso');
 
         // Marcar que acabamos de salvar para evitar recarregamento
         setJustSaved(true);
@@ -218,14 +218,14 @@ const UserEditor = () => {
             .single();
 
           if (!fetchError && updatedData) {
-            console.log('✅ Dados atualizados recuperados do banco:', updatedData);
+            logger.debug('Dados atualizados recuperados do banco');
             // Atualizar apenas o estado do usuário, não o formData
             setUser(updatedData);
           } else {
-            console.warn('⚠️ Não foi possível buscar dados atualizados:', fetchError);
+            logger.warn('Nao foi possivel buscar dados atualizados');
           }
-        } catch (fetchError) {
-          console.warn('⚠️ Erro ao buscar dados atualizados:', fetchError);
+        } catch (fetchError: any) {
+          logger.warn('Erro ao buscar dados atualizados:', { error: fetchError?.message });
         }
 
         // Se o email mudou, atualizar também no auth.users
@@ -234,9 +234,9 @@ const UserEditor = () => {
             // Usar Edge Function ou admin API para atualizar email
             // Por enquanto, vamos apenas atualizar o profile
             // O email no auth.users pode precisar de confirmação
-            console.log('Email mudou, mas atualização no auth.users requer permissões admin');
-          } catch (emailError) {
-            console.warn('Não foi possível atualizar email no auth.users:', emailError);
+            logger.debug('Email mudou, mas atualizacao no auth.users requer permissoes admin');
+          } catch (emailError: any) {
+            logger.warn('Nao foi possivel atualizar email no auth.users:', { error: emailError?.message });
           }
         }
 
@@ -249,7 +249,7 @@ const UserEditor = () => {
             .eq('user_id', id);
 
           if (updateError) {
-            console.log('Update failed, trying upsert:', updateError.message);
+            logger.debug('Update failed, trying upsert');
             
             // If update fails, try upsert
             const { error: upsertError } = await supabase
@@ -262,7 +262,7 @@ const UserEditor = () => {
               });
 
             if (upsertError) {
-              console.warn('Upsert also failed:', upsertError.message);
+              logger.warn('Upsert also failed');
               // Try direct insert (in case no role exists)
               const { error: insertError } = await supabase
                 .from('user_roles')
@@ -272,13 +272,13 @@ const UserEditor = () => {
                 });
 
               if (insertError) {
-                console.warn('All role update methods failed:', insertError.message);
+                logger.warn('All role update methods failed');
                 // Don't throw error, profile was updated successfully
               }
             }
           }
-        } catch (roleError) {
-          console.warn('Role update failed completely:', roleError);
+        } catch (roleError: any) {
+          logger.warn('Role update failed completely:', { error: roleError?.message });
           // Don't throw error, profile was updated successfully
         }
 
@@ -286,7 +286,7 @@ const UserEditor = () => {
         let passwordUpdated = false;
         if (formData.password && formData.password.trim() !== "") {
           try {
-            console.log('Tentando atualizar senha para usuário:', id);
+            logger.debug('Tentando atualizar senha para usuario');
             
             // Obter o token de autenticação atual
             const { data: { session } } = await supabase.auth.getSession();
@@ -296,6 +296,7 @@ const UserEditor = () => {
             }
 
             // Chamar a Edge Function para atualizar senha
+            // SECURITY: Never log password data
             const { data: passwordData, error: passwordError } = await supabase.functions.invoke(
               'update-user-password',
               {
@@ -307,18 +308,18 @@ const UserEditor = () => {
             );
 
             if (passwordError) {
-              console.error('Erro ao atualizar senha:', passwordError);
+              logger.error('Erro ao atualizar senha');
               toast({
                 title: "Aviso",
                 description: passwordError.message || "Perfil atualizado, mas a senha não foi alterada.",
                 variant: "default",
               });
             } else {
-              console.log('Senha atualizada com sucesso:', passwordData);
+              logger.debug('Senha atualizada com sucesso');
               passwordUpdated = true;
             }
           } catch (passwordUpdateError: any) {
-            console.error('Erro ao tentar atualizar senha:', passwordUpdateError);
+            logger.error('Erro ao tentar atualizar senha:', { error: passwordUpdateError?.message });
             const errorMessage = passwordUpdateError?.message || passwordUpdateError?.toString() || "Erro desconhecido";
             toast({
               title: "Aviso",
@@ -385,7 +386,7 @@ const UserEditor = () => {
         }
       }
     } catch (error: any) {
-      console.error('❌ Erro ao salvar usuário:', error);
+      logger.error('Erro ao salvar usuario:', { error: error?.message });
       
       // Em caso de erro, manter o formData como está (não recarregar do banco)
       setJustSaved(true);

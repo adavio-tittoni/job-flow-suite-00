@@ -329,9 +329,12 @@ export const useCandidateDocuments = (candidateId: string) => {
       return transformedData as CandidateDocument[];
     },
     enabled: !!candidateId,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
-    staleTime: 0, // Sempre considerar os dados como stale
+    // Optimized cache settings - data stays fresh for 1 minute
+    staleTime: 1000 * 60 * 1,
+    // Refetch on mount only if data is stale
+    refetchOnMount: "always",
+    // Don't refetch on window focus for better UX
+    refetchOnWindowFocus: false,
   });
 
   const createDocument = useMutation({
@@ -397,6 +400,12 @@ export const useCandidateDocuments = (candidateId: string) => {
 
   const deleteDocument = useMutation({
     mutationFn: async (id: string) => {
+      // Remover vínculos em document_comparisons antes de deletar o documento
+      await supabase
+        .from("document_comparisons")
+        .delete()
+        .eq("candidate_document_id", id);
+
       // Primeiro, buscar o documento para obter o file_url
       const { data: document, error: fetchError } = await supabase
         .from("candidate_documents")
@@ -450,6 +459,60 @@ export const useCandidateDocuments = (candidateId: string) => {
     updateDocument,
     deleteDocument,
   };
+};
+
+export const useDeleteCandidateDocument = () => {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ candidateId, documentId }: { candidateId: string; documentId: string }) => {
+      await supabase
+        .from("document_comparisons")
+        .delete()
+        .eq("candidate_document_id", documentId);
+
+      const { data: document, error: fetchError } = await supabase
+        .from("candidate_documents")
+        .select("file_url")
+        .eq("id", documentId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      if (document?.file_url) {
+        const { error: storageError } = await supabase.storage
+          .from("candidate-documents")
+          .remove([document.file_url]);
+        if (storageError) {
+          console.warn("Erro ao deletar arquivo do storage:", storageError);
+        }
+      }
+
+      const { error } = await supabase
+        .from("candidate_documents")
+        .delete()
+        .eq("id", documentId);
+
+      if (error) throw error;
+      return { candidateId, documentId };
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["candidate-documents", variables.candidateId] });
+      queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", variables.candidateId] });
+      queryClient.invalidateQueries({ queryKey: ["document-comparisons", variables.candidateId] });
+      toast({
+        title: "Documento excluído com sucesso",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Erro ao excluir documento",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 };
 
 export const useCandidateHistory = (candidateId: string) => {

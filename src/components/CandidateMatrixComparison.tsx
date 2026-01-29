@@ -3,9 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertCircle, CheckCircle, XCircle, Target, Clock } from "lucide-react";
+import { AlertCircle, CheckCircle, XCircle, Target, Clock, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
+import { useDeleteCandidateDocument } from "@/hooks/useCandidates";
 
 interface MatrixItem {
   id: string;
@@ -109,7 +112,9 @@ interface DetailedComparisonTableProps {
 }
 
 const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTableProps) => {
-  const { comparisons, loading, error } = useVacancyCandidateComparison(vacancyId);
+  const { comparisons, loading, error, refetch } = useVacancyCandidateComparison(vacancyId);
+  const deleteCandidateDocument = useDeleteCandidateDocument();
+  const [deleteTarget, setDeleteTarget] = useState<{ candidateId: string; documentId: string } | null>(null);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -139,15 +144,39 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
     }
   };
 
-  const getValidityBadge = (validity: string) => {
+  const getValidityBadge = (validity: string, validityDate?: string) => {
+    if (validityDate && validityDate !== 'null' && validityDate !== 'undefined') {
+      const date = new Date(validityDate);
+      const formattedDate = date.toLocaleDateString('pt-BR');
+      switch (validity) {
+        case 'Valido':
+          return <Badge className="bg-green-100 text-green-800">Válido até {formattedDate}</Badge>;
+        case 'Vencido':
+          return <Badge className="bg-red-100 text-red-800">Vencido em {formattedDate}</Badge>;
+        default:
+          return <Badge variant="outline">{formattedDate}</Badge>;
+      }
+    }
     switch (validity) {
       case 'Valido':
         return <Badge className="bg-green-100 text-green-800">Válido</Badge>;
       case 'Vencido':
         return <Badge className="bg-red-100 text-red-800">Vencido</Badge>;
       default:
-        return <Badge variant="outline">N/A</Badge>;
+        return null;
     }
+  };
+
+  const getEffectiveValidity = (doc: { validityStatus: string; validityDate?: string; candidateDocument?: { expiryDate: string } }) => {
+    const effectiveValidityDate = doc.validityDate || doc.candidateDocument?.expiryDate;
+    let displayStatus = doc.validityStatus;
+    if (doc.validityStatus === 'N/A' && effectiveValidityDate && effectiveValidityDate !== 'null' && effectiveValidityDate !== 'undefined') {
+      const expiry = new Date(effectiveValidityDate);
+      if (!isNaN(expiry.getTime())) {
+        displayStatus = expiry.getTime() >= new Date().setHours(0, 0, 0, 0) ? 'Valido' : 'Vencido';
+      }
+    }
+    return { displayStatus, effectiveValidityDate };
   };
 
   if (loading) {
@@ -248,6 +277,7 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                     <TableHead>Horas</TableHead>
                     <TableHead>Modalidade</TableHead>
                     <TableHead>Observações</TableHead>
+                    <TableHead>Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -260,7 +290,10 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                         </div>
                       </TableCell>
                       <TableCell>
-                        {getValidityBadge(doc.validityStatus)}
+                        {(() => {
+                          const { displayStatus, effectiveValidityDate } = getEffectiveValidity(doc);
+                          return getValidityBadge(displayStatus, effectiveValidityDate);
+                        })()}
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="text-xs">
@@ -329,6 +362,19 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                           )}
                         </div>
                       </TableCell>
+                      <TableCell>
+                        {doc.candidateDocument && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteTarget({ candidateId: comparison.candidateId, documentId: doc.candidateDocument!.id })}
+                            title="Excluir documento comparado"
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -337,6 +383,35 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
           </CardContent>
         </Card>
       ))}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir documento comparado</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este documento comparado? O documento e todos os vínculos serão removidos do banco de dados. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) {
+                  deleteCandidateDocument.mutate(deleteTarget, {
+                    onSuccess: () => {
+                      refetch();
+                      setDeleteTarget(null);
+                    },
+                  });
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

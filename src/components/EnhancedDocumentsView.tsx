@@ -5,12 +5,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy, FileDown } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy, FileDown, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import * as XLSX from 'xlsx';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+import { useQueryClient } from '@tanstack/react-query';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { useDeleteCandidateDocument } from '@/hooks/useCandidates';
 
 interface EnhancedDocumentsViewProps {
   candidateId: string;
@@ -32,7 +35,10 @@ export const EnhancedDocumentsView = ({
   onCopyLink
 }: EnhancedDocumentsViewProps) => {
   const [activeTab, setActiveTab] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState<{ candidateId: string; documentId: string } | null>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const deleteCandidateDocument = useDeleteCandidateDocument();
 
   // Buscar TODOS os itens da matriz e suas comparações (LEFT JOIN)
   const { data: allMatrixItems, isLoading: loading, error } = useQuery({
@@ -102,12 +108,34 @@ export const EnhancedDocumentsView = ({
         };
       }) || [];
 
-      console.log('✅ Itens da matriz com comparações:', itemsWithComparisons.length);
+      // 4. Buscar expiry_date dos documentos do candidato vinculados às comparações (para coluna Validade)
+      const candidateDocumentIds = [...new Set(
+        comparisons?.filter(c => c.candidate_document_id).map(c => c.candidate_document_id) || []
+      )] as string[];
+      let expiryByDocId: Record<string, string | null> = {};
+      if (candidateDocumentIds.length > 0) {
+        const { data: candidateDocs } = await supabase
+          .from('candidate_documents')
+          .select('id, expiry_date')
+          .in('id', candidateDocumentIds);
+        expiryByDocId = Object.fromEntries(
+          (candidateDocs || []).map(d => [d.id, d.expiry_date ?? null])
+        );
+      }
+
+      const itemsWithExpiry = itemsWithComparisons.map(item => ({
+        ...item,
+        candidateExpiryDate: item.comparison?.candidate_document_id
+          ? expiryByDocId[item.comparison.candidate_document_id] ?? undefined
+          : undefined
+      }));
+
+      console.log('✅ Itens da matriz com comparações:', itemsWithExpiry.length);
       console.log('📊 Comparações encontradas:', comparisons?.map(c => ({
         matrix_item_id: c.matrix_item_id,
         status: c.status
       })));
-      return itemsWithComparisons;
+      return itemsWithExpiry;
     },
     enabled: !!candidateId && !!matrixId,
     staleTime: 0,
@@ -190,41 +218,48 @@ export const EnhancedDocumentsView = ({
     const comparison = item.comparison;
     const status = item.status; // CONFERE, PARCIAL ou PENDENTE
     const docCatalog = matrixItem.documents_catalog;
-    
-    // SEMPRE priorizar documents_catalog para informações do documento
-    // comparison contém apenas status e observações da comparação
-    
+    const candidateExpiryDate = item.candidateExpiryDate; // data de validade do documento do candidato
+
+    // Validade: priorizar validity_date da comparação; senão usar expiry_date do documento do candidato
+    const validityDate = comparison?.validity_date || candidateExpiryDate;
+    let validityStatus = comparison?.validity_status === 'valid' ? 'Valido' :
+                         comparison?.validity_status === 'expired' ? 'Vencido' :
+                         comparison ? 'N/A' : 'Não verificado';
+    if ((!validityStatus || validityStatus === 'N/A') && validityDate && validityDate !== 'null' && validityDate !== 'undefined') {
+      const expiry = new Date(validityDate);
+      if (!isNaN(expiry.getTime())) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        validityStatus = expiry.getTime() >= today.getTime() ? 'Valido' : 'Vencido';
+      }
+    }
+
     // Usar nome_curso se disponível, senão usar name (compatibilidade com documentos antigos e novos)
     const documentName = docCatalog?.nome_curso || docCatalog?.name || 'Nome não disponível';
     // Usar sigla_documento se disponível, senão usar sigla (compatibilidade com documentos antigos e novos)
     const documentSigla = docCatalog?.sigla_documento || docCatalog?.sigla || '';
-    
+
     console.log('📄 Processando documento:', {
       documentName,
       sigla: documentSigla,
-      nome_curso: docCatalog?.nome_curso,
-      name: docCatalog?.name,
-      sigla_documento: docCatalog?.sigla_documento,
-      sigla: docCatalog?.sigla,
       statusFinal: status,
       hasComparison: !!comparison,
-      comparisonStatus: comparison?.status
+      validityDate,
+      validityStatus
     });
-    
+
     return {
       id: matrixItem.id,
       documentName,
       documentCode: docCatalog?.codigo || '',
       category: docCatalog?.document_category || docCatalog?.categoria || '',
-      sigla: documentSigla, // SEMPRE da documents_catalog
+      sigla: documentSigla,
       obligation: matrixItem.obrigatoriedade || 'Obrigatório',
       requiredHours: matrixItem.carga_horaria || 0,
       modality: matrixItem.modalidade || '',
-      status: status, // CONFERE, PARCIAL ou PENDENTE - FONTE ÚNICA DA VERDADE
-      validityStatus: comparison?.validity_status === 'valid' ? 'Valido' : 
-                     comparison?.validity_status === 'expired' ? 'Vencido' : 
-                     comparison ? 'N/A' : 'Não verificado',
-      validityDate: comparison?.validity_date,
+      status: status,
+      validityStatus,
+      validityDate: validityDate || undefined,
       observations: comparison?.observations || (status === 'PENDENTE' ? 'Documento ainda não comparado' : '-'),
       candidateDocument: comparison?.candidate_document_id ? { id: comparison.candidate_document_id } : undefined,
       similarityScore: comparison?.similarity_score || 0,
@@ -301,7 +336,7 @@ export const EnhancedDocumentsView = ({
       case 'Vencido':
         return <Badge className="bg-red-100 text-red-800">Vencido</Badge>;
       default:
-        return <Badge variant="outline">N/A</Badge>;
+        return null;
     }
   };
 
@@ -1044,14 +1079,26 @@ export const EnhancedDocumentsView = ({
                             <Plus className="h-4 w-4" />
                           </Button>
                         ) : doc.candidateDocument ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onViewDocument?.(doc.candidateDocument!.id)}
-                            className="h-8 w-8 p-0 bg-green-50 border-green-200 text-green-600 hover:bg-green-100"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onViewDocument?.(doc.candidateDocument!.id)}
+                              className="h-8 w-8 p-0 bg-green-50 border-green-200 text-green-600 hover:bg-green-100"
+                              title="Visualizar documento"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setDeleteTarget({ candidateId, documentId: doc.candidateDocument!.id })}
+                              className="h-8 w-8 p-0 text-destructive border-destructive/30 hover:bg-destructive/10"
+                              title="Excluir documento comparado"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
                         ) : null}
                       </div>
                     </td>
@@ -1062,6 +1109,35 @@ export const EnhancedDocumentsView = ({
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir documento comparado</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este documento comparado? O documento e todos os vínculos serão removidos do banco de dados. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) {
+                  deleteCandidateDocument.mutate(deleteTarget, {
+                    onSuccess: () => {
+                      queryClient.invalidateQueries({ queryKey: ['matrix-items-comparisons', candidateId, matrixId] });
+                      setDeleteTarget(null);
+                    },
+                  });
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

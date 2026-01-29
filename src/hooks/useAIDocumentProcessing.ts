@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { logger } from "@/lib/logger";
 
 interface AIDocumentProcessingResult {
   document_name: string;
@@ -27,20 +28,38 @@ interface DocumentProcessingOptions {
   language?: 'pt' | 'en' | 'auto';
 }
 
+// SECURITY: Get webhook headers with optional authentication
+const getWebhookHeaders = (): HeadersInit => {
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  
+  // Add authentication header if configured
+  const webhookAuthToken = import.meta.env.VITE_N8N_WEBHOOK_AUTH_TOKEN;
+  if (webhookAuthToken) {
+    headers['Authorization'] = `Bearer ${webhookAuthToken}`;
+  }
+  
+  return headers;
+};
+
+// Get webhook URL from environment
+const getWebhookUrl = (): string => {
+  return import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://n8nwebhook.aulan8ntech.shop/webhook/8da335c4-08d9-4ffb-8ce6-7d4ce4e02bdf';
+};
+
 export const useAIDocumentProcessing = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const { toast } = useToast();
 
   const sanitizeFileName = (fileName: string): string => {
-    console.log('🧹 SANITIZING FILE NAME v2.0:', fileName);
+    logger.debug('Sanitizing file name:', fileName);
     
     // Extrair extensão primeiro
     const parts = fileName.split('.');
     const extension = parts.length > 1 ? parts.pop() : '';
     const nameWithoutExt = parts.join('.');
-    
-    console.log('File name parts:', { nameWithoutExt, extension });
     
     // Sanitizar nome (sem extensão) - MUITO mais agressivo
     let sanitized = nameWithoutExt
@@ -52,12 +71,10 @@ export const useAIDocumentProcessing = () => {
       .replace(/^-|-$/g, '') // Remove hífens do início e fim
       .substring(0, 80); // Limita o tamanho
     
-    console.log('Sanitized name without extension:', sanitized);
-    
     // Garantir que não está vazio
     if (!sanitized || sanitized.length === 0) {
       sanitized = `file_${Date.now()}`;
-      console.log('⚠️ Name was empty, using fallback:', sanitized);
+      logger.debug('Name was empty, using fallback:', sanitized);
     }
     
     // Adicionar extensão se existir (também em lowercase)
@@ -65,28 +82,15 @@ export const useAIDocumentProcessing = () => {
       sanitized += `.${extension.toLowerCase()}`;
     }
     
-    console.log('✅ FINAL SANITIZED NAME v2.0:', sanitized);
-    console.log('Name transformation:', {
-      original: fileName,
-      sanitized: sanitized,
-      transformation: `${fileName} -> ${sanitized}`,
-      version: 'v2.0 - NO TIMESTAMP'
-    });
+    logger.debug('File name sanitized:', { original: fileName, sanitized });
     return sanitized;
   };
 
   const uploadFileToStorage = async (file: File, candidateId: string): Promise<string> => {
-    console.log('🚀 UPLOAD FUNCTION CALLED - NEW VERSION v2.0');
+    logger.debug('Upload function called');
     const sanitizedFileName = sanitizeFileName(file.name);
     // Usar apenas o nome sanitizado, sem timestamp
     const fileName = `${candidateId}/${sanitizedFileName}`;
-    
-    console.log('File name options:', {
-      original: file.name,
-      sanitized: sanitizedFileName,
-      final: fileName,
-      version: 'v2.0 - NO TIMESTAMP'
-    });
     
     // Verificar se o arquivo é válido
     if (!file || file.size === 0) {
@@ -96,26 +100,10 @@ export const useAIDocumentProcessing = () => {
     // Verificar tipo de arquivo
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
     if (!allowedTypes.includes(file.type)) {
-      console.warn('File type not in allowed list:', file.type);
+      logger.warn('File type not in allowed list:', file.type);
     }
     
-    console.log('File validation:', {
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      lastModified: file.lastModified,
-      isValid: file.size > 0
-    });
-    
-    console.log('Uploading file:', { 
-      originalName: file.name, 
-      sanitizedName: sanitizedFileName, 
-      fileName,
-      fileSize: file.size,
-      fileType: file.type,
-      candidateId,
-      timestamp: Date.now()
-    });
+    logger.debug('File validation passed:', { name: file.name, size: file.size, type: file.type });
     
     // Verificar se o fileName é válido
     if (!fileName || fileName.length === 0) {
@@ -127,33 +115,14 @@ export const useAIDocumentProcessing = () => {
       throw new Error('Nome de arquivo muito longo');
     }
     
-    console.log('Attempting Supabase storage upload:', {
-      bucket: 'candidate-documents',
-      fileName: fileName,
-      fileSize: file.size,
-      fileType: file.type,
-      candidateId: candidateId
-    });
+    logger.debug('Attempting storage upload:', { bucket: 'candidate-documents', fileName });
 
-    // Bucket existe - confirmado via MCP Supabase
-    console.log('✅ Bucket candidate-documents existe - pulando verificação');
-
-      const { data: uploadData, error: uploadError } = await supabase.storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
       .from('candidate-documents')
       .upload(fileName, file);
 
     if (uploadError) {
-      console.error('Upload error details:', {
-        error: uploadError,
-        errorMessage: uploadError.message,
-        fileName,
-        sanitizedFileName,
-        originalName: file.name,
-        fileSize: file.size,
-        fileType: file.type,
-        uploadData,
-        candidateId
-      });
+      logger.error('Upload error:', { errorMessage: uploadError.message, fileName });
       
       // Tratar erros específicos
       if (uploadError.message.includes('Invalid key')) {
@@ -165,11 +134,7 @@ export const useAIDocumentProcessing = () => {
       }
     }
     
-    console.log('File uploaded successfully:', {
-      fileName,
-      uploadData,
-      fileSize: file.size
-    });
+    logger.debug('File uploaded successfully:', { fileName });
     return fileName;
   };
 
@@ -287,17 +252,16 @@ export const useAIDocumentProcessing = () => {
   ): Promise<AIDocumentProcessingResult[]> => {
     const results: AIDocumentProcessingResult[] = [];
     
-    console.log(`Starting batch processing of ${files.length} files for candidate ${candidateId}`);
-    console.log('Files to process:', files.map(f => ({ name: f.name, size: f.size, type: f.type })));
+    logger.debug(`Starting batch processing of ${files.length} files`);
     
     try {
       // Step 1: Test base64 conversion first
-      console.log('Step 1: Testing base64 conversion...');
+      logger.debug('Step 1: Converting files to base64...');
       const filesWithBase64 = [];
       
       for (let i = 0; i < files.length; i++) {
         try {
-          console.log(`Testing base64 conversion for file ${i + 1}/${files.length}: ${files[i].name}`);
+          logger.debug(`Converting file ${i + 1}/${files.length}: ${files[i].name}`);
           const base64 = await fileToBase64(files[i]);
           
           if (!base64 || base64.length === 0) {
@@ -312,19 +276,10 @@ export const useAIDocumentProcessing = () => {
             lastModified: files[i].lastModified
           });
           
-          console.log(`File ${i + 1} base64 conversion successful:`, {
-            name: files[i].name,
-            size: files[i].size,
-            base64Length: base64.length
-          });
+          logger.debug(`File ${i + 1} converted successfully`);
           
         } catch (error: any) {
-          console.error(`Error converting file ${i + 1} to base64:`, {
-            error,
-            fileName: files[i].name,
-            fileSize: files[i].size,
-            fileType: files[i].type
-          });
+          logger.error(`Error converting file ${i + 1} to base64:`, { fileName: files[i].name, error: error.message });
           
           // Create error result
           const errorResult: AIDocumentProcessingResult = {
@@ -349,13 +304,13 @@ export const useAIDocumentProcessing = () => {
       }
       
       // Step 2: Upload successful files to storage
-      console.log('Step 2: Uploading successful files to storage...');
+      logger.debug('Step 2: Uploading files to storage...');
       for (let i = 0; i < filesWithBase64.length; i++) {
         try {
           const file = files.find(f => f.name === filesWithBase64[i].name);
           if (!file) continue;
           
-          console.log(`Uploading file ${i + 1}/${filesWithBase64.length}: ${file.name}`);
+          logger.debug(`Uploading file ${i + 1}/${filesWithBase64.length}: ${file.name}`);
           const fileUrl = await uploadFileToStorage(file, candidateId);
           
           // Create processing document in database
@@ -377,10 +332,10 @@ export const useAIDocumentProcessing = () => {
           };
           results.push(result);
           
-          console.log(`File ${i + 1} uploaded successfully:`, file.name);
+          logger.debug(`File ${i + 1} uploaded successfully`);
           
         } catch (error: any) {
-          console.error(`Error uploading file ${filesWithBase64[i].name}:`, error);
+          logger.error(`Error uploading file:`, { fileName: filesWithBase64[i].name, error: error.message });
           
           // Create error result
           const errorResult: AIDocumentProcessingResult = {
@@ -405,11 +360,11 @@ export const useAIDocumentProcessing = () => {
       }
       
       // Step 3: Send all files to n8n webhook in one request
-      console.log('Step 3: Sending all files to n8n webhook...');
+      logger.debug('Step 3: Sending files to n8n webhook...');
       try {
         if (filesWithBase64.length > 0) {
           await sendToN8nWebhookWithData(filesWithBase64, candidateId, []);
-          console.log('All files sent to n8n webhook successfully');
+          logger.debug('All files sent to n8n webhook successfully');
           
           // Update all results to indicate webhook was sent
           results.forEach(result => {
@@ -418,14 +373,14 @@ export const useAIDocumentProcessing = () => {
             }
           });
         } else {
-          console.log('No files to send to webhook');
+          logger.debug('No files to send to webhook');
         }
         
         setProgress(100);
-        console.log('Batch processing completed successfully');
+        logger.debug('Batch processing completed successfully');
         
       } catch (error: any) {
-        console.error('Error sending files to n8n webhook:', error);
+        logger.error('Error sending files to n8n webhook:', { error: error.message });
         toast({
           title: "Erro no webhook",
           description: `Erro ao enviar arquivos para n8n: ${error.message}`,
@@ -434,7 +389,7 @@ export const useAIDocumentProcessing = () => {
       }
       
     } catch (error: any) {
-      console.error('Error in batch processing:', error);
+      logger.error('Error in batch processing:', { error: error.message });
       toast({
         title: "Erro no processamento em lote",
         description: `Erro geral: ${error.message}`,
@@ -442,14 +397,7 @@ export const useAIDocumentProcessing = () => {
       });
     }
     
-    console.log(`Batch processing completed. ${results.length} results generated.`);
-    console.log('Results summary:', results.map(r => ({
-      name: r.document_name,
-      type: r.document_type,
-      status: r.extracted_fields?.status,
-      webhook_sent: r.extracted_fields?.webhook_sent,
-      error: r.extracted_fields?.error
-    })));
+    logger.debug(`Batch processing completed. ${results.length} results generated.`);
     return results;
   };
 
@@ -466,7 +414,7 @@ export const useAIDocumentProcessing = () => {
           
           // Verificar se o arquivo é muito grande para o webhook
           if (base64.length > 10 * 1024 * 1024) { // 10MB em base64
-            console.warn(`File ${file.name} is too large for webhook (${base64.length} bytes)`);
+            logger.warn(`File ${file.name} is too large for webhook`);
             throw new Error(`Arquivo ${file.name} é muito grande para processamento (máximo 10MB)`);
           }
           
@@ -484,12 +432,7 @@ export const useAIDocumentProcessing = () => {
       return await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
 
     } catch (error: any) {
-      console.error('Error preparing webhook data:', {
-        error,
-        candidateId,
-        totalFiles: files.length,
-        files: files.map(f => ({ name: f.name, size: f.size, type: f.type }))
-      });
+      logger.error('Error preparing webhook data:', { error: error.message, totalFiles: files.length });
       return { success: false, message: error.message };
     }
   };
@@ -508,12 +451,12 @@ export const useAIDocumentProcessing = () => {
         .single();
 
       if (candidateError) {
-        console.error('Erro ao buscar candidato:', candidateError);
+        logger.error('Erro ao buscar candidato:', { error: candidateError.message });
         // Continuar mesmo sem o nome, mas logar o erro
       }
 
-      // Preparar dados para envio
-      console.log('Preparing webhook data...');
+      // Preparar dados para envio - SECURITY: não logar dados sensíveis como base64
+      logger.debug('Preparing webhook data...', { totalFiles: filesWithBase64.length });
       const webhookData = {
         candidate_id: candidateId,
         candidate_name: candidate?.name || null,
@@ -524,95 +467,48 @@ export const useAIDocumentProcessing = () => {
         webhook_source: 'job-flow-suite',
         status: 'processing' // Indica que está sendo processado
       };
-      
-      console.log('Webhook data structure:', {
-        candidate_id: webhookData.candidate_id,
-        candidate_name: webhookData.candidate_name,
-        total_files: webhookData.total_files,
-        timestamp: webhookData.timestamp,
-        files: webhookData.files.map(f => ({
-          name: f.name,
-          size: f.size,
-          type: f.type,
-          base64Length: f.base64 ? f.base64.length : 0,
-          hasBase64: !!f.base64
-        }))
-      });
 
       // Verificar tamanho total dos dados
       const totalDataSize = JSON.stringify(webhookData).length;
-      console.log('Webhook data prepared:', {
-        candidate_id: webhookData.candidate_id,
-        candidate_name: webhookData.candidate_name,
-        total_files: webhookData.total_files,
-        timestamp: webhookData.timestamp,
-        totalDataSize: totalDataSize,
-        files: webhookData.files.map(f => ({
-          name: f.name,
-          size: f.size,
-          type: f.type,
-          base64Length: f.base64 ? f.base64.length : 0,
-          hasBase64: !!f.base64
-        }))
-      });
+      logger.debug('Webhook data prepared:', { totalFiles: webhookData.total_files, totalDataSize });
 
       // Verificar se os dados são muito grandes
       if (totalDataSize > 50 * 1024 * 1024) { // 50MB
-        console.warn(`Webhook data is too large (${totalDataSize} bytes)`);
+        logger.warn(`Webhook data is too large (${totalDataSize} bytes)`);
         throw new Error('Dados do webhook são muito grandes para envio');
       }
 
-      // Enviar para o webhook do n8n
-      const webhookUrl = 'https://n8nwebhook.aulan8ntech.shop/webhook/8da335c4-08d9-4ffb-8ce6-7d4ce4e02bdf';
+      // Enviar para o webhook do n8n - SECURITY: Use centralized URL and headers
+      const webhookUrl = getWebhookUrl();
       
       // Usar fetch com retry mechanism
       const sendWithRetry = async (retryCount = 0) => {
         try {
-          console.log(`Sending webhook request (attempt ${retryCount + 1}) to:`, webhookUrl);
-          console.log('Request body size:', JSON.stringify(webhookData).length);
-          console.log('Request body preview:', {
-            candidate_id: webhookData.candidate_id,
-            candidate_name: webhookData.candidate_name,
-            total_files: webhookData.total_files,
-            files: webhookData.files.map(f => ({
-              name: f.name,
-              size: f.size,
-              type: f.type,
-              base64Length: f.base64 ? f.base64.length : 0
-            }))
-          });
+          logger.debug(`Sending webhook request (attempt ${retryCount + 1})`);
           
           const response = await fetch(webhookUrl, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: getWebhookHeaders(),
             body: JSON.stringify(webhookData)
           });
 
-          console.log('Webhook response received:', {
-            status: response.status,
-            statusText: response.statusText,
-            ok: response.ok,
-            headers: Object.fromEntries(response.headers.entries())
-          });
+          logger.debug('Webhook response received:', { status: response.status, ok: response.ok });
           
           // Ler resposta uma única vez
           const responseText = await response.text();
-          console.log('Webhook response body:', responseText);
 
           if (!response.ok) {
-            console.error(`Webhook failed: ${response.status} ${response.statusText}`, responseText);
+            logger.error(`Webhook failed: ${response.status} ${response.statusText}`);
             
             if (retryCount < 2) {
-              console.log(`Retrying webhook request (attempt ${retryCount + 1})`);
+              logger.debug(`Retrying webhook request (attempt ${retryCount + 1})`);
               await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
               return sendWithRetry(retryCount + 1);
             }
             
-            throw new Error(`Webhook failed: ${response.status} - ${responseText}`);
+            throw new Error(`Webhook failed: ${response.status}`);
           } else {
-            console.log('Webhook sent successfully');
+            logger.debug('Webhook sent successfully');
             
             // Processar resposta do webhook
             let responseData: any = null;
@@ -635,7 +531,7 @@ export const useAIDocumentProcessing = () => {
               responseLower.includes('nao pertence ao candidato');
             
             if (isDocumentNotBelonging) {
-              console.warn('⚠️ Documento não pertence ao candidato detectado na resposta');
+              logger.warn('Documento não pertence ao candidato detectado na resposta');
             }
             
             return {
@@ -645,10 +541,10 @@ export const useAIDocumentProcessing = () => {
               isDocumentNotBelonging
             };
           }
-        } catch (error) {
-          console.error(`Webhook error on attempt ${retryCount + 1}:`, error);
+        } catch (error: any) {
+          logger.error(`Webhook error on attempt ${retryCount + 1}:`, { error: error.message });
           if (retryCount < 2) {
-            console.log(`Retrying webhook request due to error (attempt ${retryCount + 1})`);
+            logger.debug(`Retrying webhook request due to error`);
             await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
             return sendWithRetry(retryCount + 1);
           }
@@ -658,13 +554,7 @@ export const useAIDocumentProcessing = () => {
 
       // Executar envio com retry e aguardar resposta
       return sendWithRetry().catch(error => {
-        console.error('Error sending to webhook after retries:', {
-          error,
-          webhookUrl,
-          candidateId,
-          totalFiles: filesWithBase64.length,
-          files: filesWithBase64.map(f => ({ name: f.name, size: f.size, type: f.type }))
-        });
+        logger.error('Error sending to webhook after retries:', { error: error.message, totalFiles: filesWithBase64.length });
         toast({
           title: "Erro no webhook",
           description: `Erro ao enviar para n8n: ${error.message}`,
@@ -674,67 +564,37 @@ export const useAIDocumentProcessing = () => {
       });
 
     } catch (error: any) {
-      console.error('Error sending webhook with data:', {
-        error,
-        candidateId,
-        totalFiles: filesWithBase64.length,
-        files: filesWithBase64.map(f => ({ name: f.name, size: f.size, type: f.type }))
-      });
+      logger.error('Error sending webhook with data:', { error: error.message, totalFiles: filesWithBase64.length });
       throw new Error(`Erro ao enviar webhook: ${error.message}`);
     }
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      console.log('Converting file to base64:', {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified
-      });
+      logger.debug('Converting file to base64:', { name: file.name, size: file.size, type: file.type });
       
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = () => {
         try {
           const result = reader.result as string;
-          console.log('FileReader result received:', {
-            resultLength: result.length,
-            resultType: typeof result,
-            startsWithData: result.startsWith('data:')
-          });
           
           // Remover o prefixo "data:image/jpeg;base64," ou similar
           const base64 = result.split(',')[1];
-          console.log('File converted to base64 successfully:', {
-            originalLength: result.length,
-            base64Length: base64.length,
-            fileName: file.name,
-            fileSize: file.size
-          });
+          logger.debug('File converted to base64 successfully:', { fileName: file.name });
           
           if (!base64 || base64.length === 0) {
             throw new Error('Base64 result is empty');
           }
           
           resolve(base64);
-        } catch (error) {
-          console.error('Error processing base64 result:', {
-            error,
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.type
-          });
+        } catch (error: any) {
+          logger.error('Error processing base64 result:', { fileName: file.name, error: error.message });
           reject(error);
         }
       };
       reader.onerror = error => {
-        console.error('FileReader error:', {
-          error,
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type
-        });
+        logger.error('FileReader error:', { fileName: file.name });
         reject(error);
       };
     });
@@ -746,12 +606,7 @@ export const useAIDocumentProcessing = () => {
     fileUrl: string
   ): Promise<string> => {
     try {
-      console.log('Creating processing document:', {
-        candidateId,
-        fileName: file.name,
-        fileUrl,
-        fileSize: file.size
-      });
+      logger.debug('Creating processing document:', { candidateId, fileName: file.name });
 
       const { data, error } = await supabase
         .from('candidate_documents')
@@ -769,31 +624,14 @@ export const useAIDocumentProcessing = () => {
         .single();
 
       if (error) {
-        console.error('Database error creating processing document:', {
-          error,
-          candidateId,
-          fileName: file.name,
-          fileUrl,
-          fileSize: file.size
-        });
+        logger.error('Database error creating processing document:', { error: error.message, fileName: file.name });
         throw error;
       }
       
-      console.log('Processing document created successfully:', {
-        documentId: data.id,
-        candidateId,
-        fileName: file.name,
-        fileUrl
-      });
+      logger.debug('Processing document created successfully:', { documentId: data.id });
       return data.id;
     } catch (error: any) {
-      console.error('Error creating processing document:', {
-        error,
-        candidateId,
-        fileName: file.name,
-        fileUrl,
-        fileSize: file.size
-      });
+      logger.error('Error creating processing document:', { error: error.message, fileName: file.name });
       throw new Error(`Erro ao criar documento: ${error.message}`);
     }
   };
@@ -803,10 +641,7 @@ export const useAIDocumentProcessing = () => {
     aiResults: AIDocumentProcessingResult
   ): Promise<void> => {
     try {
-      console.log('Updating document with AI results:', {
-        documentId,
-        aiResults
-      });
+      logger.debug('Updating document with AI results:', { documentId, documentName: aiResults.document_name });
 
       const { error } = await supabase
         .from('candidate_documents')
@@ -826,35 +661,13 @@ export const useAIDocumentProcessing = () => {
         .eq('id', documentId);
 
       if (error) {
-        console.error('Database error updating document with AI results:', {
-          error,
-          documentId,
-          aiResults
-        });
+        logger.error('Database error updating document with AI results:', { error: error.message, documentId });
         throw error;
       }
       
-      console.log('Document updated with AI results successfully:', {
-        documentId,
-        documentName: aiResults.document_name,
-        documentType: aiResults.document_type,
-        registrationNumber: aiResults.registration_number,
-        issueDate: aiResults.issue_date,
-        expiryDate: aiResults.expiry_date,
-        issuingAuthority: aiResults.issuing_authority,
-        cargaHorariaTotal: aiResults.carga_horaria_total,
-        cargaHorariaTeorica: aiResults.carga_horaria_teorica,
-        cargaHorariaPratica: aiResults.carga_horaria_pratica,
-        detail: aiResults.detail,
-        confidenceScore: aiResults.confidence_score,
-        extractedFields: aiResults.extracted_fields
-      });
+      logger.debug('Document updated with AI results successfully:', { documentId, documentName: aiResults.document_name });
     } catch (error: any) {
-      console.error('Error updating document with AI results:', {
-        error,
-        documentId,
-        aiResults
-      });
+      logger.error('Error updating document with AI results:', { error: error.message, documentId });
       throw new Error(`Erro ao atualizar documento: ${error.message}`);
     }
   };
@@ -865,15 +678,15 @@ export const useAIDocumentProcessing = () => {
     processedResults: AIDocumentProcessingResult[] = []
   ): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
     try {
-      console.log('🌐 Iniciando envio de webhook com documentos da matriz...');
+      logger.debug('Iniciando envio de webhook com documentos da matriz...');
       
       // 1. Converter arquivos para base64
-      console.log(`📄 Convertendo ${files.length} arquivo(s) para base64...`);
+      logger.debug(`Convertendo ${files.length} arquivo(s) para base64...`);
       const filesWithBase64 = [];
       
       for (const file of files) {
         try {
-          console.log(`📄 Convertendo arquivo: ${file.name}`);
+          logger.debug(`Convertendo arquivo: ${file.name}`);
           const base64 = await fileToBase64(file);
           filesWithBase64.push({
             name: file.name,
@@ -882,9 +695,9 @@ export const useAIDocumentProcessing = () => {
             base64: base64,
             lastModified: file.lastModified
           });
-          console.log(`✅ Arquivo ${file.name} convertido com sucesso`);
+          logger.debug(`Arquivo ${file.name} convertido com sucesso`);
         } catch (error: any) {
-          console.error(`❌ Erro ao converter ${file.name} para base64:`, error);
+          logger.error(`Erro ao converter ${file.name} para base64:`, { error: error.message });
           toast({
             title: "Erro na conversão",
             description: `Erro ao converter ${file.name}: ${error.message}`,
@@ -893,7 +706,7 @@ export const useAIDocumentProcessing = () => {
         }
       }
 
-      console.log(`✅ ${filesWithBase64.length} arquivo(s) convertido(s) para base64`);
+      logger.debug(`${filesWithBase64.length} arquivo(s) convertido(s) para base64`);
       
       // 2. Obter candidato e seu matrix_id
       const { data: candidate, error: candidateError } = await supabase
@@ -903,17 +716,17 @@ export const useAIDocumentProcessing = () => {
         .single();
 
       if (candidateError) {
-        console.error('Erro ao buscar candidato:', candidateError);
+        logger.error('Erro ao buscar candidato:', { error: candidateError.message });
         throw candidateError;
       }
 
       if (!candidate.matrix_id) {
-        console.warn('⚠️ Nenhum matrix_id encontrado para o candidato, enviando sem documentos da matriz');
+        logger.warn('Nenhum matrix_id encontrado para o candidato, enviando sem documentos da matriz');
         const result = await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
         return { success: result.success, message: result.message, documentId: result.documentId, isDocumentNotBelonging: result.isDocumentNotBelonging };
       }
 
-      console.log('✅ Matrix ID encontrado:', candidate.matrix_id);
+      logger.debug('Matrix ID encontrado:', candidate.matrix_id);
 
       // 3. Buscar todos os itens da matriz com dados do catálogo de documentos
       const { data: matrixItems, error: matrixError } = await supabase
@@ -942,7 +755,7 @@ export const useAIDocumentProcessing = () => {
         .eq('matrix_id', candidate.matrix_id);
 
       if (matrixError) {
-        console.error('Erro ao buscar itens da matriz:', matrixError);
+        logger.error('Erro ao buscar itens da matriz:', { error: matrixError.message });
         throw matrixError;
       }
 
@@ -957,7 +770,7 @@ export const useAIDocumentProcessing = () => {
         document: item.documents_catalog
       })) || [];
 
-      console.log('📋 Documentos da matriz preparados:', matrixDocuments.length);
+      logger.debug('Documentos da matriz preparados:', matrixDocuments.length);
 
       // 5. Preparar dados do webhook com documentos da matriz
       const webhookData = {
@@ -974,45 +787,38 @@ export const useAIDocumentProcessing = () => {
         status: 'processing_comparison'
       };
 
-      console.log('📤 Estrutura de dados do webhook:', {
-        candidate_id: webhookData.candidate_id,
-        candidate_name: webhookData.candidate_name,
-        matrix_id: webhookData.matrix_id,
+      logger.debug('Estrutura de dados do webhook preparada:', {
         total_files: webhookData.total_files,
-        total_matrix_documents: webhookData.total_matrix_documents,
-        timestamp: webhookData.timestamp
+        total_matrix_documents: webhookData.total_matrix_documents
       });
 
-      // 5. Enviar para webhook do n8n
-      const webhookUrl = 'https://n8nwebhook.aulan8ntech.shop/webhook/8da335c4-08d9-4ffb-8ce6-7d4ce4e02bdf';
+      // 5. Enviar para webhook do n8n - SECURITY: Use centralized URL and headers
+      const webhookUrl = getWebhookUrl();
       
       const sendWithRetry = async (retryCount = 0): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
         try {
-          console.log(`📡 Enviando webhook com documentos da matriz (tentativa ${retryCount + 1})`);
+          logger.debug(`Enviando webhook com documentos da matriz (tentativa ${retryCount + 1})`);
           
           const response = await fetch(webhookUrl, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: getWebhookHeaders(),
             body: JSON.stringify(webhookData)
           });
 
           if (!response.ok) {
             const errorText = await response.text();
-            console.error(`❌ Erro no webhook: ${response.status} - ${errorText}`);
+            logger.error(`Erro no webhook: ${response.status}`);
             
             if (retryCount < 2) {
-              console.log(`🔄 Tentando novamente (${retryCount + 1})...`);
+              logger.debug(`Tentando novamente (${retryCount + 1})...`);
               await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
               return sendWithRetry(retryCount + 1);
             }
             throw new Error(`Webhook falhou: ${response.status}`);
           }
           
-          console.log('✅ Webhook enviado com sucesso com documentos da matriz');
+          logger.debug('Webhook enviado com sucesso com documentos da matriz');
           const responseText = await response.text();
-          console.log('📥 Resposta do webhook:', responseText);
           
           // Processar resposta do webhook
           let responseData: any = null;
@@ -1035,7 +841,7 @@ export const useAIDocumentProcessing = () => {
             responseLower.includes('nao pertence ao candidato');
           
           if (isDocumentNotBelonging) {
-            console.warn('⚠️ Documento não pertence ao candidato detectado na resposta');
+            logger.warn('Documento não pertence ao candidato detectado na resposta');
           }
           
           return {
@@ -1044,10 +850,10 @@ export const useAIDocumentProcessing = () => {
             documentId: responseData?.document_id,
             isDocumentNotBelonging
           };
-        } catch (error) {
-          console.error(`❌ Erro na tentativa ${retryCount + 1}:`, error);
+        } catch (error: any) {
+          logger.error(`Erro na tentativa ${retryCount + 1}:`, { error: error.message });
           if (retryCount < 2) {
-            console.log(`🔄 Tentando novamente devido a erro...`);
+            logger.debug('Tentando novamente devido a erro...');
             await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
             return sendWithRetry(retryCount + 1);
           }
@@ -1057,7 +863,7 @@ export const useAIDocumentProcessing = () => {
 
       return sendWithRetry();
     } catch (error: any) {
-      console.error('❌ Erro ao enviar webhook com documentos da matriz:', error);
+      logger.error('Erro ao enviar webhook com documentos da matriz:', { error: error.message });
       toast({
         title: "Erro no webhook",
         description: `Erro ao enviar para n8n: ${error.message}`,
