@@ -1126,14 +1126,17 @@ export const EnhancedDocumentsView = ({
                   deleteCandidateDocument.mutate(deleteTarget, {
                     onSuccess: () => {
                       queryClient.invalidateQueries({ queryKey: ['matrix-items-comparisons', candidateId, matrixId] });
+                      queryClient.invalidateQueries({ queryKey: ['candidate-documents', candidateId] });
+                      queryClient.invalidateQueries({ queryKey: ['candidate-requirement-status', candidateId] });
                       setDeleteTarget(null);
                     },
                   });
                 }
               }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteCandidateDocument.isPending}
             >
-              Excluir
+              {deleteCandidateDocument.isPending ? 'Excluindo…' : 'Excluir'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

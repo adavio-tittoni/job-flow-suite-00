@@ -37,6 +37,17 @@ interface CatalogDocument {
   issuing_authority: string | null;
 }
 
+/** Verifica se o texto parece ser ID do bucket (UUID) em vez do nome do documento. */
+function looksLikeBucketId(name: string | null | undefined): boolean {
+  if (!name?.trim()) return false;
+  const n = name.trim();
+  return (
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(n) ||
+    /^[0-9a-f]{32}$/i.test(n) ||
+    (n.length <= 50 && /^[0-9a-f-]+$/i.test(n))
+  );
+}
+
 export const CandidateDocumentForm = ({ candidateId, document, prefilledData, onSuccess, onCancel }: CandidateDocumentFormProps) => {
   const { createDocument, updateDocument } = useCandidateDocuments(candidateId);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -147,13 +158,18 @@ export const CandidateDocumentForm = ({ candidateId, document, prefilledData, on
           const selected = data.find(doc => doc.id === selectedCatalogId);
           if (selected) {
             setSelectedCatalogItem(selected);
+            // Se o documento salvo veio com ID do bucket em document_name, exibir o nome do catálogo
+            if (document && looksLikeBucketId(document.document_name)) {
+              setValue("document_name", selected.name);
+              setSearchValue(selected.name);
+            }
           }
         }
       }
     };
     
     loadCatalogDocuments();
-  }, [selectedCatalogId]);
+  }, [selectedCatalogId, document, setValue]);
 
   // Filter documents based on search
   const filteredDocuments = catalogDocuments.filter(doc =>

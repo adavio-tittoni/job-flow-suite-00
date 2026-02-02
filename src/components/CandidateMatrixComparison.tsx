@@ -115,6 +115,7 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
   const { comparisons, loading, error, refetch } = useVacancyCandidateComparison(vacancyId);
   const deleteCandidateDocument = useDeleteCandidateDocument();
   const [deleteTarget, setDeleteTarget] = useState<{ candidateId: string; documentId: string } | null>(null);
+  const isDeleting = deleteCandidateDocument.isPending;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -368,8 +369,9 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                             variant="ghost"
                             size="sm"
                             onClick={() => setDeleteTarget({ candidateId: comparison.candidateId, documentId: doc.candidateDocument!.id })}
-                            title="Excluir documento comparado"
+                            title="Excluir documento comparado (remove da comparação e da base de dados)"
                             className="text-destructive hover:text-destructive"
+                            disabled={isDeleting}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -397,17 +399,20 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
             <AlertDialogAction
               onClick={() => {
                 if (deleteTarget) {
-                  deleteCandidateDocument.mutate(deleteTarget, {
-                    onSuccess: () => {
-                      refetch();
-                      setDeleteTarget(null);
-                    },
-                  });
+                  deleteCandidateDocument.mutate(
+                    { ...deleteTarget, vacancyId },
+                    {
+                      onSuccess: () => {
+                        setDeleteTarget(null);
+                      },
+                    }
+                  );
                 }
               }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting}
             >
-              Excluir
+              {isDeleting ? "Excluindo…" : "Excluir"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

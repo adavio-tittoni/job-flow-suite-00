@@ -53,8 +53,6 @@ export default defineConfig({
             '@radix-ui/react-avatar',
             '@radix-ui/react-progress',
             '@radix-ui/react-alert-dialog',
-            '@radix-ui/react-toggle',
-            '@radix-ui/react-toggle-group',
           ],
           'vendor-query': ['@tanstack/react-query'],
           'vendor-supabase': ['@supabase/supabase-js'],

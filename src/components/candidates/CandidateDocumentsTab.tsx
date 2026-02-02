@@ -3,6 +3,30 @@ import { Plus, Trash2, FileDown, Eye, Upload, RefreshCw, Copy } from "lucide-rea
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
 
+/** Verifica se o texto é ID do bucket (UUID) ou nome derivado dele (ex.: uuid.pdf). */
+function looksLikeBucketIdOrDerived(value: string | null | undefined): boolean {
+  if (!value?.trim()) return false;
+  const v = value.trim();
+  const uuidOnly = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(v) ||
+    /^[0-9a-f]{32}$/i.test(v) ||
+    (v.length <= 50 && /^[0-9a-f-]+$/i.test(v));
+  if (uuidOnly) return true;
+  const uuidWithExt = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]+)?$/i.test(v) ||
+    /^[0-9a-f]{32}(\.[a-z0-9]+)?$/i.test(v);
+  return uuidWithExt;
+}
+
+/** Retorna o nome legível do documento para exibição (evita mostrar ID do bucket no h2/título). */
+function getDocumentDisplayName(doc: CandidateDocument): string {
+  const name = doc.document_name?.trim();
+  if (name && !looksLikeBucketIdOrDerived(name)) return name;
+  const arquivo = doc.arquivo_original?.trim();
+  if (arquivo && !looksLikeBucketIdOrDerived(arquivo)) return arquivo;
+  const fromPath = doc.file_url?.split("/").pop()?.split("?")[0] || "";
+  if (fromPath && !looksLikeBucketIdOrDerived(fromPath)) return fromPath;
+  return "Documento";
+}
+
 // Utility function to safely format dates
 const safeFormatDate = (dateString: string | null | undefined, formatStr: string = 'dd/MM/yyyy'): string => {
   if (!dateString || dateString.trim() === '' || dateString === 'null' || dateString === 'undefined') {
@@ -292,8 +316,8 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       return;
     }
 
-    // Open modal immediately and start loading
-    setPreviewName(document.document_name || document.file_url);
+    // Open modal immediately and start loading (mostrar nome do documento, não ID do bucket)
+    setPreviewName(getDocumentDisplayName(document));
     const fileType = getFileType(document.file_url);
     setPreviewType(fileType);
     setIsPreviewOpen(true);
@@ -532,7 +556,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     return expiry.getTime() >= today.getTime(); // Show only non-expired documents
   });
 
-  const handleExportDocuments = () => {
+  const handleExportDocuments = async () => {
     if (!validDocuments || validDocuments.length === 0) {
       toast({
         title: "Nenhum documento",
@@ -542,30 +566,66 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       return;
     }
 
-    // Prepare CSV data (only valid documents, no observation)
-    const csvData = validDocuments.map(doc => ({
-      'Grupo': doc.group_name || '',
-      'Categoria': doc.document_category || 'N/A', // Always use document_category from catalog
-      'Tipo': doc.document_type || '',
-      'Documento': doc.document_name || '',
-      'Autoridade Emissora': doc.issuing_authority || '',
-      'Modalidade': doc.modality || '',
-      'Data Emissão': safeFormatDate(doc.issue_date),
-      'Data Validade': safeFormatDate(doc.expiry_date),
-      'Status de Validade': doc.expiry_date ? (() => {
-        const expiry = new Date(doc.expiry_date);
-        const today = new Date();
-        const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        return diffDays < 0 ? 'Vencido' : diffDays <= 30 ? `Vence em ${diffDays} dias` : 'Válido';
-      })() : 'N/A',
-      'Arquivo Original': doc.arquivo_original || ''
-    }));
+    // Gerar URLs assinadas de download para cada documento (igual ao Exportar Excel)
+    const documentDownloadUrls: Record<string, string> = {};
+    const baseUrl = window.location.origin;
+
+    for (const doc of validDocuments) {
+      if (doc.file_url) {
+        const normalizedPath = normalizeFilePath(doc.file_url);
+        if (normalizedPath && !normalizedPath.startsWith('http')) {
+          try {
+            const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+              .from('candidate-documents')
+              .createSignedUrl(normalizedPath, 31536000); // 1 ano de validade
+
+            if (!signedUrlError && signedUrlData?.signedUrl) {
+              let signedUrl = signedUrlData.signedUrl;
+              if (signedUrl.startsWith('/')) {
+                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+                signedUrl = `${supabaseUrl}/storage/v1${signedUrl}`;
+              }
+              documentDownloadUrls[doc.id] = signedUrl;
+            }
+          } catch (e) {
+            console.warn('Erro ao gerar URL assinada para documento:', doc.id, e);
+          }
+        }
+      }
+      // Fallback: URL de visualização no sistema
+      if (!documentDownloadUrls[doc.id]) {
+        documentDownloadUrls[doc.id] = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.id}`;
+      }
+    }
+
+    // Prepare CSV data (only valid documents, with URL Download like Exportar Excel)
+    const csvData = validDocuments.map(doc => {
+      const downloadUrl = documentDownloadUrls[doc.id] || '';
+      return {
+        'Grupo': doc.group_name || '',
+        'Categoria': doc.document_category || 'N/A',
+        'Tipo': doc.document_type || '',
+        'Documento': doc.document_name || '',
+        'Autoridade Emissora': doc.issuing_authority || '',
+        'Modalidade': doc.modality || '',
+        'Data Emissão': safeFormatDate(doc.issue_date),
+        'Data Validade': safeFormatDate(doc.expiry_date),
+        'Status de Validade': doc.expiry_date ? (() => {
+          const expiry = new Date(doc.expiry_date);
+          const today = new Date();
+          const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays < 0 ? 'Vencido' : diffDays <= 30 ? `Vence em ${diffDays} dias` : 'Válido';
+        })() : 'N/A',
+        'Arquivo Original': doc.arquivo_original || '',
+        'URL Download': downloadUrl,
+      };
+    });
 
     // Convert to CSV
     const headers = Object.keys(csvData[0]);
     const csvContent = [
       '\uFEFF' + headers.join(';'), // Add BOM for UTF-8
-      ...csvData.map(row => headers.map(header => `"${row[header as keyof typeof row]}"`).join(';'))
+      ...csvData.map(row => headers.map(header => `"${(row[header as keyof typeof row] ?? '').toString().replace(/"/g, '""')}"`).join(';'))
     ].join('\n');
 
     // Download file
@@ -577,7 +637,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
 
     toast({
       title: "Exportação concluída",
-      description: "Lista de documentos exportada com sucesso.",
+      description: "Lista de documentos exportada com sucesso (incluindo URL de download).",
     });
   };
 
@@ -917,11 +977,12 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                       data={previewUrl}
                       type="application/pdf"
                       className="w-full h-full min-h-[400px]"
+                      title={previewName}
                     >
                       <iframe
                         src={previewUrl}
                         className="w-full h-full min-h-[400px]"
-                        title="PDF Preview"
+                        title={previewName}
                       />
                     </object>
                   ) : previewType === 'image' ? (

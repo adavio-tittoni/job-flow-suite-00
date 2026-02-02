@@ -71,6 +71,37 @@ export interface CandidateHistory {
   approved?: boolean;
 }
 
+/** Converte file_url (URL completa ou caminho) no path relativo ao bucket para Storage.remove() */
+function getStoragePathFromFileUrl(fileUrl: string | null | undefined): string | null {
+  if (!fileUrl) return null;
+  if (!fileUrl.includes("http://") && !fileUrl.includes("https://") && !fileUrl.includes("supabase.co")) {
+    return fileUrl;
+  }
+  const urlWithoutQuery = fileUrl.split("?")[0];
+  try {
+    const url = new URL(urlWithoutQuery);
+    const pathParts = url.pathname.split("/").filter((part) => part !== "");
+    const bucketIndex = pathParts.findIndex((part) => part === "candidate-documents");
+    if (bucketIndex !== -1 && bucketIndex + 1 < pathParts.length) {
+      return pathParts.slice(bucketIndex + 1).join("/");
+    }
+    const objectIndex = pathParts.findIndex((part) => part === "object");
+    if (objectIndex !== -1) {
+      const publicOrSignIndex = pathParts.findIndex((part, idx) => idx > objectIndex && (part === "public" || part === "sign"));
+      if (publicOrSignIndex !== -1) {
+        const bucketIndexAfter = pathParts.findIndex((part, idx) => idx > publicOrSignIndex && part === "candidate-documents");
+        if (bucketIndexAfter !== -1 && bucketIndexAfter + 1 < pathParts.length) {
+          return pathParts.slice(bucketIndexAfter + 1).join("/");
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const match = urlWithoutQuery.match(/candidate-documents\/(.+)$/);
+  return match?.[1] ?? fileUrl;
+}
+
 export const useCandidates = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -415,15 +446,16 @@ export const useCandidateDocuments = (candidateId: string) => {
 
       if (fetchError) throw fetchError;
 
-      // Deletar o arquivo do storage se existir
+      // Deletar o arquivo do bucket candidate-documents no Supabase Storage
       if (document?.file_url) {
-        const { error: storageError } = await supabase.storage
-          .from('candidate-documents')
-          .remove([document.file_url]);
-
-        if (storageError) {
-          console.warn('Erro ao deletar arquivo do storage:', storageError);
-          // Não falhar a operação se o arquivo não existir no storage
+        const storagePath = getStoragePathFromFileUrl(document.file_url);
+        if (storagePath) {
+          const { error: storageError } = await supabase.storage
+            .from("candidate-documents")
+            .remove([storagePath]);
+          if (storageError) {
+            console.warn("[useCandidateDocuments] Erro ao deletar arquivo do Storage:", storageError);
+          }
         }
       }
 
@@ -461,51 +493,91 @@ export const useCandidateDocuments = (candidateId: string) => {
   };
 };
 
+export type DeleteCandidateDocumentVariables = {
+  candidateId: string;
+  documentId: string;
+  vacancyId?: string;
+};
+
 export const useDeleteCandidateDocument = () => {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ candidateId, documentId }: { candidateId: string; documentId: string }) => {
-      await supabase
+    mutationFn: async ({ candidateId, documentId }: DeleteCandidateDocumentVariables) => {
+      console.log("[useDeleteCandidateDocument] Iniciando exclusão:", { candidateId, documentId });
+
+      // 1. Buscar file_url antes de deletar (para remover do storage depois)
+      const { data: document, error: fetchErr } = await supabase
+        .from("candidate_documents")
+        .select("file_url")
+        .eq("id", documentId)
+        .maybeSingle();
+
+      if (fetchErr) {
+        console.error("[useDeleteCandidateDocument] Erro ao buscar documento:", fetchErr);
+        throw fetchErr;
+      }
+      if (!document) {
+        console.warn("[useDeleteCandidateDocument] Documento não encontrado (id:", documentId, "). Removendo apenas document_comparisons.");
+      }
+
+      // 2. Remover vínculos em document_comparisons (permite deletar o documento depois)
+      const { error: comparisonsError } = await supabase
         .from("document_comparisons")
         .delete()
         .eq("candidate_document_id", documentId);
 
-      const { data: document, error: fetchError } = await supabase
-        .from("candidate_documents")
-        .select("file_url")
-        .eq("id", documentId)
-        .single();
-
-      if (fetchError) throw fetchError;
-
-      if (document?.file_url) {
-        const { error: storageError } = await supabase.storage
-          .from("candidate-documents")
-          .remove([document.file_url]);
-        if (storageError) {
-          console.warn("Erro ao deletar arquivo do storage:", storageError);
-        }
+      if (comparisonsError) {
+        console.error("[useDeleteCandidateDocument] Erro ao deletar document_comparisons:", comparisonsError);
+        throw comparisonsError;
       }
+      console.log("[useDeleteCandidateDocument] document_comparisons removidos para candidate_document_id:", documentId);
 
-      const { error } = await supabase
+      // 3. Deletar o registro na tabela candidate_documents (obrigatório)
+      const { error: deleteError } = await supabase
         .from("candidate_documents")
         .delete()
         .eq("id", documentId);
 
-      if (error) throw error;
+      if (deleteError) {
+        console.error("[useDeleteCandidateDocument] Erro ao deletar candidate_documents:", deleteError);
+        throw new Error(`Falha ao excluir documento no banco: ${deleteError.message}`);
+      }
+      console.log("[useDeleteCandidateDocument] Registro candidate_documents excluído:", documentId);
+
+      // 4. Remover arquivo do bucket candidate-documents no Supabase Storage (S3)
+      if (document?.file_url) {
+        const storagePath = getStoragePathFromFileUrl(document.file_url);
+        if (storagePath) {
+          const { error: storageError } = await supabase.storage
+            .from("candidate-documents")
+            .remove([storagePath]);
+          if (storageError) {
+            console.error("[useDeleteCandidateDocument] Erro ao deletar arquivo do Storage:", storageError);
+          } else {
+            console.log("[useDeleteCandidateDocument] Arquivo removido do Storage:", storagePath);
+          }
+        } else {
+          console.warn("[useDeleteCandidateDocument] file_url não pôde ser convertido em path do Storage:", document.file_url);
+        }
+      }
+
       return { candidateId, documentId };
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["candidate-documents", variables.candidateId] });
       queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", variables.candidateId] });
       queryClient.invalidateQueries({ queryKey: ["document-comparisons", variables.candidateId] });
+      if (variables.vacancyId) {
+        queryClient.invalidateQueries({ queryKey: ["vacancy-candidate-comparison", variables.vacancyId] });
+      }
       toast({
         title: "Documento excluído com sucesso",
       });
     },
     onError: (error) => {
+      console.error("[useDeleteCandidateDocument] Mutation falhou:", error);
       toast({
         title: "Erro ao excluir documento",
         description: error.message,
