@@ -30,6 +30,7 @@ interface CandidateDocument {
   modality: string | null;
   issue_date: string | null;
   detail: string | null;
+  declaracao: boolean | null;
 }
 
 
@@ -127,7 +128,8 @@ export const useAdvancedMatrixComparison = (candidateId: string, matrixId: strin
           link_validacao,
           file_url,
           arquivo_original,
-          tipo_de_codigo
+          tipo_de_codigo,
+          declaracao
         `)
         .eq('candidate_id', candidateId);
 

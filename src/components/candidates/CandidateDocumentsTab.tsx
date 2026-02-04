@@ -818,8 +818,59 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     }
   };
 
-  // Tabela inferior: mostrar apenas documentos tagados como Não Comparado
-  const documentsToShow = validDocuments.filter((doc) => getComparisonStatus(doc.id) === null);
+  // Função para obter prioridade do status (menor = maior prioridade)
+  const getStatusPriority = (status: string | null | undefined): number => {
+    if (status === 'CONFERE') return 0;
+    if (status === 'PARCIAL') return 1;
+    return 2; // PENDENTE ou qualquer outro
+  };
+
+  // Obter o Set de candidate_document_id que são "vencedores" (aparecem na tabela de cima)
+  // Um documento é "vencedor" se ele é o documento com maior prioridade para seu matrix_item_id
+  const getWinnerDocumentIds = (): Set<string> => {
+    if (!documentComparisonsData?.comparisons) return new Set();
+    
+    const comparisons = documentComparisonsData.comparisons;
+    
+    // Agrupar por matrix_item_id
+    const byMatrixItem = new Map<string, typeof comparisons>();
+    for (const comp of comparisons) {
+      if (!comp.matrix_item_id) continue;
+      const existing = byMatrixItem.get(comp.matrix_item_id) || [];
+      existing.push(comp);
+      byMatrixItem.set(comp.matrix_item_id, existing);
+    }
+    
+    // Para cada grupo, encontrar o "vencedor" (maior prioridade, depois mais recente)
+    const winnerIds = new Set<string>();
+    for (const [, comps] of byMatrixItem) {
+      const sorted = [...comps].sort((a, b) => {
+        // Primeiro ordenar por prioridade de status
+        const priorityA = getStatusPriority(a.status);
+        const priorityB = getStatusPriority(b.status);
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
+        }
+        // Se mesmo status, ordenar por data mais recente
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+      
+      // O primeiro é o "vencedor"
+      const winner = sorted[0];
+      if (winner?.candidate_document_id) {
+        winnerIds.add(winner.candidate_document_id);
+      }
+    }
+    
+    return winnerIds;
+  };
+
+  // Tabela inferior: mostrar documentos que NÃO são "vencedores" da comparação
+  // Isso inclui: documentos não comparados E documentos que foram encavalados (existe outro Confere/Parcial para o mesmo requisito)
+  const winnerDocumentIds = getWinnerDocumentIds();
+  const documentsToShow = validDocuments.filter((doc) => !winnerDocumentIds.has(doc.id));
 
   // Pré-gerar URLs assinadas e atualizar periodicamente
   useEffect(() => {
@@ -1208,6 +1259,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                       <TableHead>Data Validade</TableHead>
                       <TableHead>Validade Status</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Observação</TableHead>
                       <TableHead>Ações</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1231,6 +1283,13 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                      </TableCell>
                      <TableCell>
                        {getComparisonStatusBadge(getComparisonStatus(document.id))}
+                     </TableCell>
+                     <TableCell>
+                       {document.declaracao === true ? (
+                         <Badge className="bg-blue-100 text-blue-800">Declaração</Badge>
+                       ) : (
+                         <span className="text-muted-foreground">-</span>
+                       )}
                      </TableCell>
                     <TableCell>
                       <div className="flex gap-2">

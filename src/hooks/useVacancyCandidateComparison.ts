@@ -315,6 +315,34 @@ async function fetchVacancyComparisons(
 
     if (compError) throw compError;
 
+    // Buscar TODOS os documentos do candidato para verificar declaracao
+    // mesmo para itens não comparados
+    const { data: allCandidateDocs } = await supabase
+      .from('candidate_documents')
+      .select('id, document_name, codigo, carga_horaria_total, modality, expiry_date, declaracao, catalog_document_id, sigla_documento, tipo_de_codigo')
+      .eq('candidate_id', candidate.id);
+
+    // Criar mapas para encontrar documentos por diferentes critérios
+    const docByCatalogId: Record<string, typeof allCandidateDocs[0]> = {};
+    const docsBySigla: Record<string, typeof allCandidateDocs[0][]> = {};
+    const docsByTipoCodigo: Record<string, typeof allCandidateDocs[0][]> = {};
+    
+    (allCandidateDocs || []).forEach(d => {
+      if (d.catalog_document_id) {
+        docByCatalogId[d.catalog_document_id] = d;
+      }
+      if (d.sigla_documento) {
+        const sigla = d.sigla_documento.toLowerCase().trim();
+        if (!docsBySigla[sigla]) docsBySigla[sigla] = [];
+        docsBySigla[sigla].push(d);
+      }
+      if (d.tipo_de_codigo) {
+        const codigo = d.tipo_de_codigo.toLowerCase().trim();
+        if (!docsByTipoCodigo[codigo]) docsByTipoCodigo[codigo] = [];
+        docsByTipoCodigo[codigo].push(d);
+      }
+    });
+
     // Processar cada requisito da matriz
     const documentComparisons: VacancyDocumentComparison[] = [];
 
@@ -327,13 +355,28 @@ async function fetchVacancyComparisons(
       }
 
       // Buscar comparação na tabela document_comparisons (mesma lógica que EnhancedDocumentsView)
-      // Se houver múltiplas comparações, pegar a mais recente
+      // Prioridade: CONFERE > PARCIAL > PENDENTE, depois por data mais recente
       const allComparisons = comparisons?.filter(comp => comp.matrix_item_id === matrixItem.id) || [];
+      
+      // Função para obter prioridade do status (menor = maior prioridade)
+      const getStatusPriority = (status: string | null | undefined): number => {
+        if (status === 'CONFERE') return 0;
+        if (status === 'PARCIAL') return 1;
+        return 2; // PENDENTE ou qualquer outro
+      };
+      
       const comparison = allComparisons.sort((a, b) => {
+        // Primeiro ordenar por prioridade de status
+        const priorityA = getStatusPriority(a.status);
+        const priorityB = getStatusPriority(b.status);
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
+        }
+        // Se mesmo status, ordenar por data mais recente
         const dateA = new Date(a.created_at || 0).getTime();
         const dateB = new Date(b.created_at || 0).getTime();
-        return dateB - dateA; // Ordenar por mais recente primeiro
-      })[0]; // Pegar a primeira (mais recente)
+        return dateB - dateA;
+      })[0]; // Pegar a primeira (maior prioridade + mais recente)
 
       // Usar status da tabela document_comparisons (fonte única da verdade)
       // Status na tabela é: 'CONFERE' | 'PARCIAL' | 'PENDENTE' (maiúsculas)
@@ -342,14 +385,13 @@ async function fetchVacancyComparisons(
       const status = statusFromTable === 'CONFERE' ? 'Confere' :
         statusFromTable === 'PARCIAL' ? 'Parcial' : 'Pendente';
 
-      // Buscar documento do candidato se houver ID vinculado
+      // Buscar documento do candidato e verificar se é declaração
       let candidateDocument = undefined;
+      let isDeclaracao = false;
+      
+      // 1. Se há comparação com documento vinculado, usar esse documento
       if (comparison?.candidate_document_id) {
-        const { data: candidateDoc } = await supabase
-          .from('candidate_documents')
-          .select('id, document_name, codigo, carga_horaria_total, modality, expiry_date')
-          .eq('id', comparison.candidate_document_id)
-          .single();
+        const candidateDoc = allCandidateDocs?.find(d => d.id === comparison.candidate_document_id);
 
         if (candidateDoc) {
           candidateDocument = {
@@ -360,6 +402,35 @@ async function fetchVacancyComparisons(
             modality: candidateDoc.modality || '',
             expiryDate: candidateDoc.expiry_date || ''
           };
+          isDeclaracao = candidateDoc.declaracao === true;
+        }
+      } else {
+        // 2. Se não há comparação, tentar encontrar documento correspondente por ID do catálogo
+        if (catalogDoc.id && docByCatalogId[catalogDoc.id]) {
+          const matchedDoc = docByCatalogId[catalogDoc.id];
+          isDeclaracao = matchedDoc.declaracao === true;
+        }
+        // 3. Se não encontrou por ID, tentar por sigla
+        else if (catalogDoc.sigla_documento) {
+          const sigla = catalogDoc.sigla_documento.toLowerCase().trim();
+          const matchedDocs = docsBySigla[sigla];
+          if (matchedDocs && matchedDocs.length > 0) {
+            const docWithDeclaracao = matchedDocs.find(d => d.declaracao === true);
+            if (docWithDeclaracao) {
+              isDeclaracao = true;
+            }
+          }
+        }
+        // 4. Se não encontrou por sigla, tentar por código
+        else if (catalogDoc.codigo) {
+          const codigo = catalogDoc.codigo.toLowerCase().trim();
+          const matchedDocs = docsByTipoCodigo[codigo];
+          if (matchedDocs && matchedDocs.length > 0) {
+            const docWithDeclaracao = matchedDocs.find(d => d.declaracao === true);
+            if (docWithDeclaracao) {
+              isDeclaracao = true;
+            }
+          }
         }
       }
 
@@ -367,6 +438,14 @@ async function fetchVacancyComparisons(
       const validityStatusFromTable = comparison?.validity_status;
       const validityStatus = validityStatusFromTable === 'valid' ? 'Valido' :
         validityStatusFromTable === 'expired' ? 'Vencido' : 'N/A';
+
+      // Montar observações com informação de declaração se aplicável
+      let observations = comparison?.observations || (status === 'Pendente' ? 'Documento ainda não comparado' : '');
+      if (isDeclaracao && observations && !observations.includes('Declaração')) {
+        observations = 'Declaração | ' + observations;
+      } else if (isDeclaracao && !observations) {
+        observations = 'Declaração';
+      }
 
       documentComparisons.push({
         requirementId: matrixItem.id,
@@ -384,7 +463,7 @@ async function fetchVacancyComparisons(
         status,
         validityStatus,
         validityDate: comparison?.validity_date, // Data de validade da comparação
-        observations: comparison?.observations || (status === 'Pendente' ? 'Documento ainda não comparado' : ''),
+        observations,
         candidateDocument,
         similarityScore: comparison?.similarity_score,
         matchType: comparison?.match_type as any

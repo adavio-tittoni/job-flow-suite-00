@@ -125,7 +125,8 @@ export const useEnhancedMatrixComparison = (candidateId: string, matrixId: strin
           link_validacao,
           file_url,
           arquivo_original,
-          tipo_de_codigo
+          tipo_de_codigo,
+          declaracao
         `)
         .eq('candidate_id', candidateId);
 

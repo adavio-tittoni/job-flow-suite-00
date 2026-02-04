@@ -79,6 +79,7 @@ export type Database = {
           catalog_document_id: string | null
           codigo: string | null
           created_at: string
+          declaracao: boolean | null
           detail: string | null
           document_category: string | null
           document_name: string
@@ -105,6 +106,7 @@ export type Database = {
           catalog_document_id?: string | null
           codigo?: string | null
           created_at?: string
+          declaracao?: boolean | null
           detail?: string | null
           document_category?: string | null
           document_name: string
@@ -131,6 +133,7 @@ export type Database = {
           catalog_document_id?: string | null
           codigo?: string | null
           created_at?: string
+          declaracao?: boolean | null
           detail?: string | null
           document_category?: string | null
           document_name?: string

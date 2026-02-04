@@ -57,6 +57,7 @@ export interface CandidateDocument {
   arquivo_original?: string;
   codigo?: string; // Custom document code for matrix comparison
   tipo_de_codigo?: string; // Type of code (e.g., A-VI/3, NR-33)
+  declaracao?: boolean; // Flag indicating if document is a declaration
 }
 
 export interface CandidateHistory {

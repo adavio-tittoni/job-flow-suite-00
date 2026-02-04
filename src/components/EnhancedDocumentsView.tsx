@@ -80,17 +80,35 @@ export const EnhancedDocumentsView = ({
 
       if (compError) throw compError;
 
-      // 3. Combinar: para cada item da matriz, encontrar sua comparação MAIS RECENTE ou criar status PENDENTE
+      // 3. Combinar: para cada item da matriz, encontrar sua comparação por PRIORIDADE ou criar status PENDENTE
+      // Função para obter prioridade do status (menor = maior prioridade)
+      const getStatusPriority = (status: string | null | undefined): number => {
+        if (status === 'CONFERE') return 0;
+        if (status === 'PARCIAL') return 1;
+        return 2; // PENDENTE ou qualquer outro
+      };
+      
       const itemsWithComparisons = matrixItems?.map(item => {
-        // Se houver múltiplas comparações, pegar a mais recente
+        // Se houver múltiplas comparações, priorizar por status: CONFERE > PARCIAL > PENDENTE
         const allComparisons = comparisons?.filter(comp => comp.matrix_item_id === item.id) || [];
         const comparison = allComparisons.sort((a, b) => {
+          // Primeiro ordenar por prioridade de status
+          const priorityA = getStatusPriority(a.status);
+          const priorityB = getStatusPriority(b.status);
+          if (priorityA !== priorityB) {
+            return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
+          }
+          // Se mesmo status, ordenar por data mais recente
           const dateA = new Date(a.created_at || 0).getTime();
           const dateB = new Date(b.created_at || 0).getTime();
-          return dateB - dateA; // Ordenar por mais recente primeiro
-        })[0]; // Pegar a primeira (mais recente)
+          return dateB - dateA;
+        })[0]; // Pegar a primeira (maior prioridade + mais recente)
         
         const status = comparison?.status || 'PENDENTE';
+        
+        // Flag para indicar se já existe comparação ativa (CONFERE ou PARCIAL)
+        // Usado para impedir adicionar outro documento quando já existe um comparado
+        const hasActiveComparison = allComparisons.some(c => c.status === 'CONFERE' || c.status === 'PARCIAL');
         
         console.log('📋 Item da matriz:', {
           matrixItemId: item.id,
@@ -98,37 +116,102 @@ export const EnhancedDocumentsView = ({
           status: status,
           comparisonStatus: comparison?.status,
           totalComparisons: allComparisons.length,
-          selectedComparisonId: comparison?.id
+          selectedComparisonId: comparison?.id,
+          hasActiveComparison
         });
         
         return {
           matrixItem: item,
           comparison,
-          status
+          status,
+          hasActiveComparison
         };
       }) || [];
 
-      // 4. Buscar expiry_date dos documentos do candidato vinculados às comparações (para coluna Validade)
-      const candidateDocumentIds = [...new Set(
-        comparisons?.filter(c => c.candidate_document_id).map(c => c.candidate_document_id) || []
-      )] as string[];
-      let expiryByDocId: Record<string, string | null> = {};
-      if (candidateDocumentIds.length > 0) {
-        const { data: candidateDocs } = await supabase
-          .from('candidate_documents')
-          .select('id, expiry_date')
-          .in('id', candidateDocumentIds);
-        expiryByDocId = Object.fromEntries(
-          (candidateDocs || []).map(d => [d.id, d.expiry_date ?? null])
-        );
-      }
+      // 4. Buscar TODOS os documentos do candidato para verificar declaracao e expiry_date
+      // Isso permite mostrar "Declaração" mesmo para documentos não comparados
+      const { data: allCandidateDocs } = await supabase
+        .from('candidate_documents')
+        .select('id, expiry_date, declaracao, catalog_document_id, sigla_documento, codigo, tipo_de_codigo, document_name')
+        .eq('candidate_id', candidateId);
 
-      const itemsWithExpiry = itemsWithComparisons.map(item => ({
-        ...item,
-        candidateExpiryDate: item.comparison?.candidate_document_id
-          ? expiryByDocId[item.comparison.candidate_document_id] ?? undefined
-          : undefined
-      }));
+      // Criar mapas por ID do documento
+      const expiryByDocId: Record<string, string | null> = {};
+      const declaracaoByDocId: Record<string, boolean> = {};
+      (allCandidateDocs || []).forEach(d => {
+        expiryByDocId[d.id] = d.expiry_date ?? null;
+        declaracaoByDocId[d.id] = d.declaracao === true;
+      });
+
+      // Criar mapas para encontrar documentos do candidato por catalog_document_id (ID do catálogo)
+      // e por sigla/código para matching mesmo sem comparação formal
+      const docByCatalogId: Record<string, typeof allCandidateDocs[0]> = {};
+      const docsBySigla: Record<string, typeof allCandidateDocs[0][]> = {};
+      const docsByTipoCodigo: Record<string, typeof allCandidateDocs[0][]> = {};
+      
+      (allCandidateDocs || []).forEach(d => {
+        if (d.catalog_document_id) {
+          docByCatalogId[d.catalog_document_id] = d;
+        }
+        if (d.sigla_documento) {
+          const sigla = d.sigla_documento.toLowerCase().trim();
+          if (!docsBySigla[sigla]) docsBySigla[sigla] = [];
+          docsBySigla[sigla].push(d);
+        }
+        if (d.tipo_de_codigo) {
+          const codigo = d.tipo_de_codigo.toLowerCase().trim();
+          if (!docsByTipoCodigo[codigo]) docsByTipoCodigo[codigo] = [];
+          docsByTipoCodigo[codigo].push(d);
+        }
+      });
+
+      const itemsWithExpiry = itemsWithComparisons.map(item => {
+        const docCatalog = item.matrixItem.documents_catalog;
+        let candidateExpiryDate: string | undefined = undefined;
+        let isDeclaracao = false;
+        
+        // 1. Se há comparação com documento vinculado, usar esse documento
+        if (item.comparison?.candidate_document_id) {
+          candidateExpiryDate = expiryByDocId[item.comparison.candidate_document_id] ?? undefined;
+          isDeclaracao = declaracaoByDocId[item.comparison.candidate_document_id] ?? false;
+        } else {
+          // 2. Se não há comparação, tentar encontrar documento correspondente por ID do catálogo
+          if (docCatalog?.id && docByCatalogId[docCatalog.id]) {
+            const matchedDoc = docByCatalogId[docCatalog.id];
+            candidateExpiryDate = matchedDoc.expiry_date ?? undefined;
+            isDeclaracao = matchedDoc.declaracao === true;
+          }
+          // 3. Se não encontrou por ID, tentar por sigla
+          else if (docCatalog?.sigla_documento) {
+            const sigla = docCatalog.sigla_documento.toLowerCase().trim();
+            const matchedDocs = docsBySigla[sigla];
+            if (matchedDocs && matchedDocs.length > 0) {
+              // Priorizar documento com declaracao = true
+              const docWithDeclaracao = matchedDocs.find(d => d.declaracao === true);
+              const matchedDoc = docWithDeclaracao || matchedDocs[0];
+              candidateExpiryDate = matchedDoc.expiry_date ?? undefined;
+              isDeclaracao = matchedDoc.declaracao === true;
+            }
+          }
+          // 4. Se não encontrou por sigla, tentar por código
+          else if (docCatalog?.codigo) {
+            const codigo = docCatalog.codigo.toLowerCase().trim();
+            const matchedDocs = docsByTipoCodigo[codigo];
+            if (matchedDocs && matchedDocs.length > 0) {
+              const docWithDeclaracao = matchedDocs.find(d => d.declaracao === true);
+              const matchedDoc = docWithDeclaracao || matchedDocs[0];
+              candidateExpiryDate = matchedDoc.expiry_date ?? undefined;
+              isDeclaracao = matchedDoc.declaracao === true;
+            }
+          }
+        }
+        
+        return {
+          ...item,
+          candidateExpiryDate,
+          isDeclaracao
+        };
+      });
 
       console.log('✅ Itens da matriz com comparações:', itemsWithExpiry.length);
       console.log('📊 Comparações encontradas:', comparisons?.map(c => ({
@@ -217,8 +300,10 @@ export const EnhancedDocumentsView = ({
     const matrixItem = item.matrixItem;
     const comparison = item.comparison;
     const status = item.status; // CONFERE, PARCIAL ou PENDENTE
+    const hasActiveComparison = item.hasActiveComparison; // true se já existe CONFERE ou PARCIAL
     const docCatalog = matrixItem.documents_catalog;
     const candidateExpiryDate = item.candidateExpiryDate; // data de validade do documento do candidato
+    const isDeclaracao = item.isDeclaracao; // se o documento é uma declaração
 
     // Validade: priorizar validity_date da comparação; senão usar expiry_date do documento do candidato
     const validityDate = comparison?.validity_date || candidateExpiryDate;
@@ -239,13 +324,22 @@ export const EnhancedDocumentsView = ({
     // Usar sigla_documento se disponível, senão usar sigla (compatibilidade com documentos antigos e novos)
     const documentSigla = docCatalog?.sigla_documento || docCatalog?.sigla || '';
 
+    // Montar observações com informação de declaração se aplicável
+    let observations = comparison?.observations || (status === 'PENDENTE' ? 'Documento ainda não comparado' : '-');
+    if (isDeclaracao && observations && !observations.includes('Declaração')) {
+      observations = 'Declaração | ' + observations;
+    } else if (isDeclaracao && (!observations || observations === '-')) {
+      observations = 'Declaração';
+    }
+
     console.log('📄 Processando documento:', {
       documentName,
       sigla: documentSigla,
       statusFinal: status,
       hasComparison: !!comparison,
       validityDate,
-      validityStatus
+      validityStatus,
+      isDeclaracao
     });
 
     return {
@@ -260,11 +354,13 @@ export const EnhancedDocumentsView = ({
       status: status,
       validityStatus,
       validityDate: validityDate || undefined,
-      observations: comparison?.observations || (status === 'PENDENTE' ? 'Documento ainda não comparado' : '-'),
+      observations,
       candidateDocument: comparison?.candidate_document_id ? { id: comparison.candidate_document_id } : undefined,
       similarityScore: comparison?.similarity_score || 0,
       matrixItemId: matrixItem.id,
-      candidateDocumentId: comparison?.candidate_document_id
+      candidateDocumentId: comparison?.candidate_document_id,
+      hasActiveComparison, // Flag para impedir adicionar outro documento quando já existe CONFERE ou PARCIAL
+      isDeclaracao // Flag para indicar se é uma declaração
     };
   });
 
@@ -1069,7 +1165,8 @@ export const EnhancedDocumentsView = ({
                     </td>
                     <td className="p-3">
                       <div className="flex gap-1">
-                        {doc.status === 'PENDENTE' ? (
+                        {/* Botão + só aparece quando PENDENTE e não existe comparação ativa (CONFERE/PARCIAL) */}
+                        {doc.status === 'PENDENTE' && !doc.hasActiveComparison ? (
                           <Button
                             size="sm"
                             variant="outline"

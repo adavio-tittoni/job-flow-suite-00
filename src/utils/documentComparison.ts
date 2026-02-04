@@ -18,6 +18,7 @@ export interface CandidateDocument {
   carga_horaria_total?: number;
   modality?: string;
   expiry_date?: string;
+  declaracao?: boolean; // Se true, documento é uma declaração e não deve ser comparado
 }
 
 export interface MatrixDocument {
@@ -39,6 +40,7 @@ export interface ComparisonResult {
   similarityScore: number;
   matchType: 'exact_id' | 'exact_name' | 'exact_sigla' | 'exact_code' | 'semantic_name' | 'none';
   matchedDocument?: CandidateDocument;
+  isDeclaracao?: boolean; // Se true, documento é uma declaração
 }
 
 /**
@@ -169,9 +171,15 @@ export const generateDetailedObservations = (
   similarityScore: number,
   validityStatus: string,
   modalityCompatible: boolean = true,
-  modalityNote?: string
+  modalityNote?: string,
+  isDeclaracao: boolean = false
 ): string => {
   const observations: string[] = [];
+  
+  // Se é declaração, adicionar como primeira observação
+  if (isDeclaracao) {
+    observations.push('Declaração');
+  }
   
   // Adicionar tipo de match de forma detalhada
   switch (matchType) {
@@ -262,26 +270,41 @@ export const compareDocumentWithMatrix = (
       };
     }
   
+  // IMPORTANTE: Filtrar documentos com declaracao = true para não serem usados na comparação/identificação
+  // Documentos de declaração não devem ser comparados com a matriz
+  const candidateDocsForComparison = candidateDocs?.filter(doc => !doc.declaracao) || [];
+  
+  console.log('🔍 compareDocumentWithMatrix: Documentos filtrados (sem declarações)', {
+    totalDocs: candidateDocs?.length || 0,
+    docsParaComparacao: candidateDocsForComparison.length,
+    declaracoesExcluidas: (candidateDocs?.length || 0) - candidateDocsForComparison.length
+  });
+  
   // Tentar encontrar documento correspondente do candidato
   let matchedDoc: CandidateDocument | null = null;
   let matchType: 'exact_id' | 'exact_name' | 'exact_sigla' | 'exact_code' | 'semantic_name' | 'none' = 'none';
   let similarityScore = 0;
+  let isDeclaracao = false;
 
   // 1. Comparação por ID exato (manter como primeira prioridade)
+  // NOTA: Para ID exato, verificamos em TODOS os documentos (incluindo declarações)
+  // porque a declaração pode estar vinculada ao item da matriz por ID
   matchedDoc = candidateDocs?.find(doc => 
     doc.catalog_document_id === matrixDoc.id
   );
   if (matchedDoc) {
     matchType = 'exact_id';
     similarityScore = 1.0;
+    isDeclaracao = matchedDoc.declaracao === true;
   }
 
   // 2. Comparação por CÓDIGO com validação STCW (segunda prioridade)
+  // IMPORTANTE: Para as comparações abaixo, usamos candidateDocsForComparison (sem declarações)
   if (!matchedDoc && matrixDoc.codigo) {
     const matrixCode = normalizeString(matrixDoc.codigo);
     
     // Prioridade 1: Validar hierarquia STCW com tipo_de_codigo
-    for (const doc of candidateDocs || []) {
+    for (const doc of candidateDocsForComparison || []) {
       if (doc.tipo_de_codigo && validateSTCWHierarchy(matrixCode, doc.tipo_de_codigo)) {
         matchedDoc = doc;
         matchType = 'exact_code';
@@ -292,7 +315,7 @@ export const compareDocumentWithMatrix = (
     
     // Prioridade 2: Buscar por tipo_de_codigo exato
     if (!matchedDoc) {
-      matchedDoc = candidateDocs?.find(doc => {
+      matchedDoc = candidateDocsForComparison?.find(doc => {
         const docTipoCodigo = doc.tipo_de_codigo;
         return docTipoCodigo && 
           normalizeString(docTipoCodigo) === matrixCode;
@@ -305,7 +328,7 @@ export const compareDocumentWithMatrix = (
     
     // Prioridade 3: Buscar por código no campo codigo
     if (!matchedDoc) {
-      matchedDoc = candidateDocs?.find(doc => {
+      matchedDoc = candidateDocsForComparison?.find(doc => {
         const docCodigo = doc.codigo;
         return docCodigo && 
           normalizeString(docCodigo) === matrixCode;
@@ -318,7 +341,7 @@ export const compareDocumentWithMatrix = (
     
     // Prioridade 4: Buscar por código no nome do documento
     if (!matchedDoc) {
-      matchedDoc = candidateDocs?.find(doc => {
+      matchedDoc = candidateDocsForComparison?.find(doc => {
         const docName = normalizeString(doc.document_name);
         return docName.includes(matrixCode);
       });
@@ -333,7 +356,7 @@ export const compareDocumentWithMatrix = (
   if (!matchedDoc && matrixDoc.sigla_documento) {
     const matrixSigla = normalizeString(matrixDoc.sigla_documento);
     
-    matchedDoc = candidateDocs?.find(doc => {
+    matchedDoc = candidateDocsForComparison?.find(doc => {
       const docSigla = doc.sigla_documento;
       return docSigla && 
         normalizeString(docSigla) === matrixSigla;
@@ -350,7 +373,7 @@ export const compareDocumentWithMatrix = (
     let bestMatch = null;
     let bestSimilarity = 0;
 
-    for (const candidateDoc of candidateDocs || []) {
+    for (const candidateDoc of candidateDocsForComparison || []) {
       // Primeiro tentar comparação básica
       const basicSimilarity = calculateBasicSimilarity(
         candidateDoc.document_name,
@@ -374,7 +397,7 @@ export const compareDocumentWithMatrix = (
   // 5. Comparação por NOME exato (fallback)
   if (!matchedDoc && matrixDoc.name) {
     const matrixDocName = normalizeString(matrixDoc.name);
-    matchedDoc = candidateDocs?.find(doc => {
+    matchedDoc = candidateDocsForComparison?.find(doc => {
       const docName = normalizeString(doc.document_name);
       return docName === matrixDocName;
     });
@@ -462,7 +485,8 @@ export const compareDocumentWithMatrix = (
     similarityScore,
     validityStatus,
     modalityCompatible,
-    modalityNote
+    modalityNote,
+    isDeclaracao
   );
 
     return {
@@ -472,7 +496,8 @@ export const compareDocumentWithMatrix = (
       observations,
       similarityScore,
       matchType,
-      matchedDocument: matchedDoc
+      matchedDocument: matchedDoc,
+      isDeclaracao
     };
     
   } catch (error) {
