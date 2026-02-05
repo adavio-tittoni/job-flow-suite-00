@@ -63,6 +63,7 @@ import { useCandidateRequirementStatus, type RequirementStatus, type Requirement
 import { useN8nWebhookListener } from "@/hooks/useN8nWebhookListener";
 import { useQueryClient } from "@tanstack/react-query";
 import { useDocumentComparisons } from "@/hooks/useDocumentComparisons";
+import { useDocumentComparisonsRealtime } from "@/hooks/useDocumentComparisonsRealtime";
 
 interface CandidateDocumentsTabProps {
   candidateId: string;
@@ -101,6 +102,9 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   
   // Get document comparisons to check if documents have been compared
   const { data: documentComparisonsData } = useDocumentComparisons(candidateId);
+
+  // Realtime: when backend inserts into document_comparisons, refresh to show "Documento pronto"
+  useDocumentComparisonsRealtime(candidateId);
 
   // Fetch candidate matrix_id and listen for changes
   useEffect(() => {
@@ -800,21 +804,22 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     return comparison?.status || null;
   };
 
-  // Get comparison status badge
+  // Get comparison status badge (whitespace-nowrap + padding para não quebrar texto)
+  const badgeClass = "whitespace-nowrap px-3 py-1.5 text-sm font-medium";
   const getComparisonStatusBadge = (status: string | null) => {
     if (!status) {
-      return <Badge variant="outline">Não Comparado</Badge>;
+      return <Badge variant="outline" className={badgeClass}>Documento não exigido</Badge>;
     }
     
     switch (status) {
       case 'CONFERE':
-        return <Badge className="bg-green-100 text-green-800">Confere</Badge>;
+        return <Badge className={`bg-green-100 text-green-800 ${badgeClass}`}>Confere</Badge>;
       case 'PARCIAL':
-        return <Badge className="bg-yellow-100 text-yellow-800">Parcial</Badge>;
+        return <Badge className={`bg-yellow-100 text-yellow-800 ${badgeClass}`}>Parcial</Badge>;
       case 'PENDENTE':
-        return <Badge className="bg-red-100 text-red-800">Pendente</Badge>;
+        return <Badge className={`bg-red-100 text-red-800 ${badgeClass}`}>Pendente</Badge>;
       default:
-        return <Badge variant="outline">Não Comparado</Badge>;
+        return <Badge variant="outline" className={badgeClass}>Documento não exigido</Badge>;
     }
   };
 
@@ -1245,22 +1250,22 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
             <p className="text-muted-foreground">Nenhum documento não comparado</p>
           </div>
         ) : (
-          <div className="rounded-md border">
-            <Table>
+          <div className="rounded-md border overflow-x-auto">
+            <Table className="min-w-[1000px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead>Sigla</TableHead>
-                      <TableHead>Tipo Código</TableHead>
-                      <TableHead>Documento</TableHead>
-                      <TableHead>Horas Total</TableHead>
-                      <TableHead>Modalidade</TableHead>
-                      <TableHead>Data Emissão</TableHead>
-                      <TableHead>Data Validade</TableHead>
-                      <TableHead>Validade Status</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Observação</TableHead>
-                      <TableHead>Ações</TableHead>
+                      <TableHead className="min-w-[100px]">Categoria</TableHead>
+                      <TableHead className="min-w-[90px]">Sigla</TableHead>
+                      <TableHead className="min-w-[110px]">Tipo Código</TableHead>
+                      <TableHead className="min-w-[240px]">Documento</TableHead>
+                      <TableHead className="min-w-[85px]">Horas Total</TableHead>
+                      <TableHead className="min-w-[130px]">Modalidade</TableHead>
+                      <TableHead className="min-w-[100px]">Data Emissão</TableHead>
+                      <TableHead className="min-w-[105px]">Data Validade</TableHead>
+                      <TableHead className="min-w-[115px]">Validade Status</TableHead>
+                      <TableHead className="min-w-[220px]">Status</TableHead>
+                      <TableHead className="min-w-[100px]">Observação</TableHead>
+                      <TableHead className="min-w-[120px]">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
               <TableBody>
@@ -1281,17 +1286,34 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                      <TableCell>
                        {getExpiryStatus(document.expiry_date)}
                      </TableCell>
-                     <TableCell>
-                       {getComparisonStatusBadge(getComparisonStatus(document.id))}
+                     <TableCell className="py-3 align-middle">
+                       <div className="flex flex-wrap items-center gap-2 min-h-[36px]">
+                         {getComparisonStatus(document.id)
+                           ? getComparisonStatusBadge(getComparisonStatus(document.id))
+                           : document.processing_status === 'sent_for_processing' || document.processing_finished === false
+                             ? <Badge variant="secondary" className="whitespace-nowrap px-3 py-1.5 text-sm font-medium">Enviados para processamento</Badge>
+                             : document.processing_status === 'error'
+                               ? (
+                                 <span className="inline-flex flex-col gap-1">
+                                   <Badge variant="destructive" className="whitespace-nowrap px-3 py-1.5 text-sm font-medium">Erro no processamento</Badge>
+                                   {document.processing_error_message && (
+                                     <span className="text-xs text-muted-foreground max-w-[240px] truncate block" title={document.processing_error_message}>
+                                       {document.processing_error_message}
+                                     </span>
+                                   )}
+                                 </span>
+                               )
+                               : getComparisonStatusBadge(null)}
+                       </div>
                      </TableCell>
-                     <TableCell>
+                     <TableCell className="py-3">
                        {document.declaracao === true ? (
-                         <Badge className="bg-blue-100 text-blue-800">Declaração</Badge>
+                         <Badge className="bg-blue-100 text-blue-800 whitespace-nowrap px-3 py-1.5 text-sm font-medium">Declaração</Badge>
                        ) : (
                          <span className="text-muted-foreground">-</span>
                        )}
                      </TableCell>
-                    <TableCell>
+                    <TableCell className="py-3">
                       <div className="flex gap-2">
                         {document.file_url && (
                           <>

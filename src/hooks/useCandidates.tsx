@@ -58,6 +58,12 @@ export interface CandidateDocument {
   codigo?: string; // Custom document code for matrix comparison
   tipo_de_codigo?: string; // Type of code (e.g., A-VI/3, NR-33)
   declaracao?: boolean; // Flag indicating if document is a declaration
+  /** False when uploaded/queued; backend sets true when processing is fully done (e.g. after document_comparisons). */
+  processing_finished?: boolean;
+  /** sent_for_processing | processed | error - set by front on create, backend when done or on error */
+  processing_status?: string | null;
+  /** Error message when processing_status = error */
+  processing_error_message?: string | null;
 }
 
 export interface CandidateHistory {

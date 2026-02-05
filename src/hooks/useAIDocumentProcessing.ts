@@ -127,8 +127,8 @@ export const useAIDocumentProcessing = () => {
       // Tratar erros específicos
       if (uploadError.message.includes('Invalid key')) {
         throw new Error(`Nome de arquivo inválido: ${fileName}. Tente renomear o arquivo.`);
-      } else if (uploadError.message.includes('already exists')) {
-        throw new Error(`Arquivo já existe: ${file.name}`);
+      } else if (uploadError.message.includes('already exists') || uploadError.message.includes('resource already exists')) {
+        throw new Error(`DOCUMENTO_JA_EXISTE: Este documento já existe. Remova o arquivo existente ou use outro nome.`);
       } else {
         throw new Error(`Erro ao fazer upload: ${uploadError.message}`);
       }
@@ -440,7 +440,8 @@ export const useAIDocumentProcessing = () => {
   const sendToN8nWebhookWithData = async (
     filesWithBase64: any[],
     candidateId: string,
-    processedResults: AIDocumentProcessingResult[] = []
+    processedResults: AIDocumentProcessingResult[] = [],
+    options?: { documentId?: string; fileStoragePath?: string }
   ): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
     try {
       // Buscar nome do candidato
@@ -455,9 +456,14 @@ export const useAIDocumentProcessing = () => {
         // Continuar mesmo sem o nome, mas logar o erro
       }
 
+      if (options?.documentId && options?.fileStoragePath && filesWithBase64.length > 0) {
+        (filesWithBase64[0] as Record<string, unknown>).document_id = options.documentId;
+        (filesWithBase64[0] as Record<string, unknown>).storage_path = options.fileStoragePath;
+      }
+
       // Preparar dados para envio - SECURITY: não logar dados sensíveis como base64
       logger.debug('Preparing webhook data...', { totalFiles: filesWithBase64.length });
-      const webhookData = {
+      const webhookData: Record<string, unknown> = {
         candidate_id: candidateId,
         candidate_name: candidate?.name || null,
         files: filesWithBase64,
@@ -467,6 +473,8 @@ export const useAIDocumentProcessing = () => {
         webhook_source: 'job-flow-suite',
         status: 'processing' // Indica que está sendo processado
       };
+      if (options?.documentId) webhookData.document_id = options.documentId;
+      if (options?.fileStoragePath) webhookData.file_storage_path = options.fileStoragePath;
 
       // Verificar tamanho total dos dados
       const totalDataSize = JSON.stringify(webhookData).length;
@@ -618,7 +626,9 @@ export const useAIDocumentProcessing = () => {
           arquivo_original: file.name,
           detail: 'Documento enviado para processamento com IA via n8n',
           group_name: 'Importado',
-          modality: 'Presencial'
+          modality: 'Presencial',
+          processing_finished: false,
+          processing_status: 'sent_for_processing'
         })
         .select('id')
         .single();
@@ -675,7 +685,8 @@ export const useAIDocumentProcessing = () => {
   const sendToN8nWebhookWithMatrix = async (
     files: File[],
     candidateId: string,
-    processedResults: AIDocumentProcessingResult[] = []
+    processedResults: AIDocumentProcessingResult[] = [],
+    options?: { documentId?: string; fileStoragePath?: string }
   ): Promise<{ success: boolean; message?: string; documentId?: string; isDocumentNotBelonging?: boolean }> => {
     try {
       logger.debug('Iniciando envio de webhook com documentos da matriz...');
@@ -707,7 +718,11 @@ export const useAIDocumentProcessing = () => {
       }
 
       logger.debug(`${filesWithBase64.length} arquivo(s) convertido(s) para base64`);
-      
+      if (options?.documentId && options?.fileStoragePath && filesWithBase64.length > 0) {
+        (filesWithBase64[0] as Record<string, unknown>).document_id = options.documentId;
+        (filesWithBase64[0] as Record<string, unknown>).storage_path = options.fileStoragePath;
+      }
+
       // 2. Obter candidato e seu matrix_id
       const { data: candidate, error: candidateError } = await supabase
         .from('candidates')
@@ -722,7 +737,7 @@ export const useAIDocumentProcessing = () => {
 
       if (!candidate.matrix_id) {
         logger.warn('Nenhum matrix_id encontrado para o candidato, enviando sem documentos da matriz');
-        const result = await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults);
+        const result = await sendToN8nWebhookWithData(filesWithBase64, candidateId, processedResults, options);
         return { success: result.success, message: result.message, documentId: result.documentId, isDocumentNotBelonging: result.isDocumentNotBelonging };
       }
 
@@ -773,7 +788,7 @@ export const useAIDocumentProcessing = () => {
       logger.debug('Documentos da matriz preparados:', matrixDocuments.length);
 
       // 5. Preparar dados do webhook com documentos da matriz
-      const webhookData = {
+      const webhookData: Record<string, unknown> = {
         candidate_id: candidateId,
         candidate_name: candidate.name,
         matrix_id: candidate.matrix_id,
@@ -786,6 +801,8 @@ export const useAIDocumentProcessing = () => {
         webhook_source: 'job-flow-suite',
         status: 'processing_comparison'
       };
+      if (options?.documentId) webhookData.document_id = options.documentId;
+      if (options?.fileStoragePath) webhookData.file_storage_path = options.fileStoragePath;
 
       logger.debug('Estrutura de dados do webhook preparada:', {
         total_files: webhookData.total_files,

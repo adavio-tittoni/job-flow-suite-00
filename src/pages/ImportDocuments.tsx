@@ -8,34 +8,21 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useCandidateDocuments } from "@/hooks/useCandidates";
-import { useAIDocumentProcessing } from "@/hooks/useAIDocumentProcessing";
 import { useCandidateVacancyAutoLink } from "@/hooks/useCandidateVacancyAutoLink";
-import { supabase } from "@/integrations/supabase/client";
+import { useUploadQueue } from "@/contexts/UploadQueueContext";
 import { useToast } from "@/hooks/use-toast";
-
-interface ImportedDocument {
-  id: string;
-  name: string;
-  file: File;
-  status: 'pending' | 'processing' | 'completed' | 'error';
-  extractedData?: any;
-  error?: string;
-  progress: number;
-}
+import type { QueueItem } from "@/contexts/UploadQueueContext";
 
 const ImportDocumentsPage = () => {
   const { id: candidateId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { createDocument } = useCandidateDocuments(candidateId!);
-  const { processDocumentWithAI, isProcessing: aiProcessing, progress: aiProgress, sendToN8nWebhook, sendToN8nWebhookWithMatrix, createProcessingDocument, uploadFileToStorage } = useAIDocumentProcessing();
+  const queue = useUploadQueue();
   const { toast } = useToast();
   
-  // Auto-link candidato a vagas quando documentos são importados
   useCandidateVacancyAutoLink(candidateId!);
 
-  const [importedDocuments, setImportedDocuments] = useState<ImportedDocument[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [documentNotBelongingDialog, setDocumentNotBelongingDialog] = useState<{
     open: boolean;
@@ -43,18 +30,13 @@ const ImportDocumentsPage = () => {
     fileName?: string;
   }>({ open: false });
 
+  const queueItems = queue?.items.filter((i) => i.candidateId === candidateId) ?? [];
+  const totalInQueue = queue?.items.length ?? 0;
+  const isProcessing = queueItems.some((i) => i.status === "processing" || i.status === "pending");
+
   const handleFileSelect = (files: FileList | null) => {
-    if (!files) return;
-
-    const newDocuments: ImportedDocument[] = Array.from(files).map(file => ({
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      name: file.name,
-      file,
-      status: 'pending',
-      progress: 0
-    }));
-
-    setImportedDocuments(prev => [...prev, ...newDocuments]);
+    if (!files || !candidateId || !queue) return;
+    queue.addJobs(candidateId, Array.from(files));
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -78,243 +60,30 @@ const ImportDocumentsPage = () => {
   };
 
   const removeDocument = (id: string) => {
-    setImportedDocuments(prev => prev.filter(doc => doc.id !== id));
+    queue?.removeJob(id);
   };
 
-  const processDocumentWithAIService = async (file: File): Promise<any> => {
-    try {
-      const result = await processDocumentWithAI(file, candidateId!, {
-        enableOCR: true,
-        extractDates: true,
-        extractNumbers: true,
-        extractText: true,
-        language: 'pt'
-      });
-
-      return result;
-    } catch (error: any) {
-      throw new Error(`Erro no processamento com IA: ${error.message}`);
-    }
-  };
-
-  const processDocument = async (document: ImportedDocument) => {
-    try {
-      setImportedDocuments(prev => 
-        prev.map(doc => 
-          doc.id === document.id 
-            ? { ...doc, status: 'processing', progress: 10 }
-            : doc
-        )
-      );
-
-      // 1. Upload arquivo para storage
-      const fileUrl = await uploadFileToStorage(document.file, candidateId!);
-      setImportedDocuments(prev => 
-        prev.map(doc => 
-          doc.id === document.id 
-            ? { ...doc, progress: 30 }
-            : doc
-        )
-      );
-
-      // 2. Criar registro na tabela candidate_documents com status "processando"
-      const documentId = await createProcessingDocument(candidateId!, document.file, fileUrl);
-      setImportedDocuments(prev => 
-        prev.map(doc => 
-          doc.id === document.id 
-            ? { ...doc, progress: 50, documentId }
-            : doc
-        )
-      );
-
-      // 3. Enviar para n8n webhook com documentos da matriz e processar resposta
-      const webhookResponse = await sendToN8nWebhookWithMatrix([document.file], candidateId!, []);
-      setImportedDocuments(prev => 
-        prev.map(doc => 
-          doc.id === document.id 
-            ? { ...doc, progress: 80 }
-            : doc
-        )
-      );
-
-      // 4. Processar resposta do webhook
-      if (webhookResponse.isDocumentNotBelonging) {
-        // Documento não pertence ao candidato - mostrar diálogo e salvar com nome específico
-        setDocumentNotBelongingDialog({
-          open: true,
-          documentId: documentId,
-          fileName: document.file.name
-        });
-        
-        // Salvar documento com nome específico
-        try {
-          await supabase
-            .from('candidate_documents')
-            .update({
-              document_name: 'Documento não pertence ao candidato',
-              document_type: 'Rejeitado',
-              detail: `Documento rejeitado: ${document.file.name}. ${webhookResponse.message || 'O documento não pertence ao candidato.'}`,
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', documentId);
-        } catch (error: any) {
-          console.error('Erro ao salvar documento rejeitado:', error);
-        }
-        
-        setImportedDocuments(prev => 
-          prev.map(doc => 
-            doc.id === document.id 
-              ? { 
-                  ...doc, 
-                  status: 'error', 
-                  progress: 100,
-                  error: 'Documento não pertence ao candidato',
-                  extractedData: {
-                    document_name: 'Documento não pertence ao candidato',
-                    document_type: 'Rejeitado',
-                    detail: webhookResponse.message || 'O documento não pertence ao candidato.',
-                    arquivo_original: document.file.name,
-                    file_url: fileUrl,
-                    documentId: documentId
-                  }
-                }
-              : doc
-          )
-        );
-      } else if (webhookResponse.success) {
-        // Processamento concluído com sucesso
-        setImportedDocuments(prev => 
-          prev.map(doc => 
-            doc.id === document.id 
-              ? { 
-                  ...doc, 
-                  status: 'completed', 
-                  progress: 100,
-                  extractedData: {
-                    document_name: document.file.name.split('.')[0],
-                    document_type: 'Processado',
-                    detail: webhookResponse.message || 'Documento processado com sucesso.',
-                    arquivo_original: document.file.name,
-                    file_url: fileUrl,
-                    documentId: documentId
-                  }
-                }
-              : doc
-          )
-        );
-        
-        toast({
-          title: "Documento processado",
-          description: webhookResponse.message || "O documento foi processado com sucesso.",
-        });
-      } else {
-        // Erro no processamento
-        setImportedDocuments(prev => 
-          prev.map(doc => 
-            doc.id === document.id 
-              ? { 
-                  ...doc, 
-                  status: 'error', 
-                  progress: 100,
-                  error: webhookResponse.message || 'Erro ao processar documento',
-                  extractedData: {
-                    document_name: document.file.name.split('.')[0],
-                    document_type: 'Erro',
-                    detail: webhookResponse.message || 'Erro ao processar documento.',
-                    arquivo_original: document.file.name,
-                    file_url: fileUrl,
-                    documentId: documentId
-                  }
-                }
-              : doc
-          )
-        );
-        
-        toast({
-          title: "Erro no processamento",
-          description: webhookResponse.message || "Erro ao processar documento.",
-          variant: "destructive",
-        });
-      }
-
-    } catch (error: any) {
-      setImportedDocuments(prev => 
-        prev.map(doc => 
-          doc.id === document.id 
-            ? { 
-                ...doc, 
-                status: 'error', 
-                error: error.message || 'Erro ao processar documento',
-                progress: 0
-              }
-            : doc
-        )
-      );
-    }
-  };
-
-  // Função removida - usando a do hook useAIDocumentProcessing
-
-  const processAllDocuments = async () => {
-    setIsProcessing(true);
-    
-    const pendingDocuments = importedDocuments.filter(doc => doc.status === 'pending');
-    
-    for (const document of pendingDocuments) {
-      await processDocument(document);
-    }
-    
-    setIsProcessing(false);
-    
-    toast({
-      title: "Processamento concluído",
-      description: "Todos os documentos foram processados.",
-    });
-  };
-
-  const saveDocumentToDatabase = async (document: ImportedDocument) => {
-    if (!document.extractedData) return;
-
+  const saveDocumentToDatabase = async (item: QueueItem) => {
+    if (!item.extractedData || !candidateId) return;
     try {
       await createDocument.mutateAsync({
-        ...document.extractedData,
-        candidate_id: candidateId!,
-        group_name: 'Importado',
-        modality: 'Presencial'
+        ...item.extractedData,
+        candidate_id: candidateId,
+        group_name: "Importado",
+        modality: "Presencial",
       });
-
       toast({
         title: "Documento salvo",
-        description: `${document.name} foi salvo com sucesso.`,
+        description: `${item.fileName} foi salvo com sucesso.`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Erro ao salvar documento.";
       toast({
         title: "Erro ao salvar",
-        description: error.message || "Erro ao salvar documento no banco de dados.",
+        description: msg,
         variant: "destructive",
       });
     }
-  };
-
-  const saveAllDocuments = async () => {
-    const processingDocuments = importedDocuments.filter(doc => doc.status === 'processing');
-    
-    if (processingDocuments.length === 0) {
-      toast({
-        title: "Nenhum documento sendo processado",
-        description: "Todos os documentos já foram enviados para processamento.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    toast({
-      title: "Documentos já enviados",
-      description: "Os documentos já foram enviados para processamento com IA. Aguarde a resposta do n8n.",
-    });
-
-    // Navegar de volta para a página do candidato
-    navigate(`/candidates/${candidateId}`);
   };
 
   const getStatusIcon = (status: string) => {
@@ -400,97 +169,92 @@ const ImportDocumentsPage = () => {
         </CardContent>
       </Card>
 
-      {/* Documents List */}
-      {importedDocuments.length > 0 && (
+      {/* Documents List - fila global; processamento em background um a um */}
+      {queueItems.length > 0 && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Documentos Importados ({importedDocuments.length})</CardTitle>
+              <CardTitle>
+                Documentos na fila ({queueItems.length} deste candidato
+                {totalInQueue > queueItems.length ? ` · ${totalInQueue} no total` : ""})
+              </CardTitle>
               <div className="flex gap-2">
-                <Button 
-                  onClick={processAllDocuments}
-                  disabled={isProcessing || importedDocuments.every(doc => doc.status !== 'pending')}
-                >
-                  {isProcessing ? 'Processando...' : 'Processar Todos'}
-                </Button>
-                {/* Botão Voltar ao Candidato - aparece quando todos os documentos terminaram */}
-                {importedDocuments.length > 0 && 
-                 !isProcessing && 
-                 importedDocuments.every(doc => doc.status === 'completed' || doc.status === 'error') && (
-                  <Button 
-                    onClick={() => navigate(`/candidates/${candidateId}`)}
-                    variant="default"
-                  >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Voltar ao Candidato
-                  </Button>
+                {isProcessing && (
+                  <span className="text-sm text-muted-foreground">Processando em background...</span>
                 )}
+                {queueItems.length > 0 &&
+                  !isProcessing &&
+                  queueItems.every((i) => i.status === "completed" || i.status === "error") && (
+                    <Button onClick={() => navigate(`/candidates/${candidateId}`)} variant="default">
+                      <ArrowLeft className="h-4 w-4 mr-2" />
+                      Voltar ao Candidato
+                    </Button>
+                  )}
               </div>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {importedDocuments.map((document) => (
-                <div key={document.id} className="border rounded-lg p-4">
+              {queueItems.map((item) => (
+                <div key={item.id} className="border rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      {getStatusIcon(document.status)}
+                      {getStatusIcon(item.status)}
                       <div>
-                        <h4 className="font-medium">{document.name}</h4>
+                        <h4 className="font-medium">{item.fileName}</h4>
                         <p className="text-sm text-gray-500">
-                          {(document.file.size / 1024 / 1024).toFixed(2)} MB
+                          {item.status === "processing" ? `${item.progress}%` : ""}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {getStatusBadge(document.status)}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeDocument(document.id)}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                      {getStatusBadge(item.status)}
+                      {item.status === "pending" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeDocument(item.id)}
+                          aria-label="Remover da fila"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {item.status === "completed" && item.extractedData && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => saveDocumentToDatabase(item)}
+                        >
+                          <Download className="h-4 w-4 mr-1" />
+                          Salvar no banco
+                        </Button>
+                      )}
                     </div>
                   </div>
 
-                  {document.status === 'processing' && (
-                    <div className="space-y-2">
-                      <Progress value={document.progress} className="h-2" />
-                      <p className="text-sm text-gray-500">
-                        Processando com IA... {document.progress}%
-                      </p>
-                    </div>
-                  )}
-
-                  {document.status === 'processing' && (
-                    <div className="space-y-2">
-                      <Alert>
+                  {item.status === "processing" && (
+                    <>
+                      <Progress value={item.progress} className="h-2" />
+                      <Alert className="mt-2">
                         <div className="h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                         <AlertDescription>
                           Documento enviado para processamento com IA via n8n. Aguarde a resposta...
                         </AlertDescription>
                       </Alert>
-                    </div>
+                    </>
                   )}
 
-                  {document.status === 'completed' && (
-                    <div className="space-y-2">
-                      <Alert>
-                        <CheckCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          Documento processado com sucesso!
-                        </AlertDescription>
-                      </Alert>
-                    </div>
+                  {item.status === "completed" && (
+                    <Alert>
+                      <CheckCircle className="h-4 w-4" />
+                      <AlertDescription>Documento processado com sucesso!</AlertDescription>
+                    </Alert>
                   )}
 
-                  {document.status === 'error' && (
+                  {item.status === "error" && (
                     <Alert variant="destructive">
                       <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Erro ao processar documento: {document.error}
-                      </AlertDescription>
+                      <AlertDescription>Erro: {item.error}</AlertDescription>
                     </Alert>
                   )}
                 </div>

@@ -92,6 +92,9 @@ export type Database = {
           issuing_authority: string | null
           link_validacao: string | null
           modality: string | null
+          processing_finished: boolean
+          processing_status: string | null
+          processing_error_message: string | null
           registration_number: string | null
           sigla_documento: string | null
           tipo_de_codigo: string | null
@@ -119,6 +122,9 @@ export type Database = {
           issuing_authority?: string | null
           link_validacao?: string | null
           modality?: string | null
+          processing_finished?: boolean
+          processing_status?: string | null
+          processing_error_message?: string | null
           registration_number?: string | null
           sigla_documento?: string | null
           tipo_de_codigo?: string | null
@@ -146,6 +152,9 @@ export type Database = {
           issuing_authority?: string | null
           link_validacao?: string | null
           modality?: string | null
+          processing_finished?: boolean
+          processing_status?: string | null
+          processing_error_message?: string | null
           registration_number?: string | null
           sigla_documento?: string | null
           tipo_de_codigo?: string | null
