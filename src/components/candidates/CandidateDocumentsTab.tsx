@@ -27,6 +27,29 @@ function getDocumentDisplayName(doc: CandidateDocument): string {
   return "Documento";
 }
 
+/**
+ * Extrai o nome real do arquivo armazenado no S3/Storage a partir de file_url ou arquivo_original.
+ * Prioriza o último segmento de file_url (que contém o nome salvo no bucket) e faz fallback
+ * para arquivo_original. Sanitiza caracteres inválidos para sistemas de arquivos.
+ */
+function getDownloadFileName(doc: CandidateDocument): string {
+  const sanitize = (n: string) => n.replace(/[\\/:*?"<>|]/g, '_').trim();
+
+  // 1. Último segmento de file_url (nome real no bucket)
+  const fromPath = doc.file_url?.split("/").pop()?.split("?")[0]?.trim() || "";
+  if (fromPath && !looksLikeBucketIdOrDerived(fromPath)) return sanitize(fromPath);
+
+  // 2. arquivo_original (nome original do upload)
+  const arquivo = doc.arquivo_original?.trim();
+  if (arquivo && !looksLikeBucketIdOrDerived(arquivo)) return sanitize(arquivo);
+
+  // 3. Fallback: document_name + extensão extraída de file_url
+  const ext = doc.file_url?.split(".").pop()?.split("?")[0]?.toLowerCase() || "";
+  const baseName = doc.document_name?.trim() || "documento";
+  const safeBase = sanitize(baseName);
+  return ext ? `${safeBase}.${ext}` : safeBase;
+}
+
 // Utility function to safely format dates
 const safeFormatDate = (dateString: string | null | undefined, formatStr: string = 'dd/MM/yyyy'): string => {
   if (!dateString || dateString.trim() === '' || dateString === 'null' || dateString === 'undefined') {
@@ -89,12 +112,14 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   const [previewDirectUrl, setPreviewDirectUrl] = useState<string>("");
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewName, setPreviewName] = useState<string>("");
+  const [previewDownloadFileName, setPreviewDownloadFileName] = useState<string>("");
   const [previewType, setPreviewType] = useState<string>("");
   
   // Cache de URLs assinadas por documento (id -> URL)
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   
   const [prefilledData, setPrefilledData] = useState<Partial<CandidateDocument> | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { toast } = useToast();
 
   // Get requirement status for pending items
@@ -246,6 +271,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     }
   };
 
+  const handleRefresh = () => {
+    window.location.reload();
+  };
+
   // Normalize file_url: extract relative path from full URL if needed
   // This handles URLs from n8n that might be download URLs with query parameters
   const normalizeFilePath = (fileUrl: string): string => {
@@ -320,8 +349,8 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       return;
     }
 
-    // Open modal immediately and start loading (mostrar nome do documento, não ID do bucket)
     setPreviewName(getDocumentDisplayName(document));
+    setPreviewDownloadFileName(getDownloadFileName(document));
     const fileType = getFileType(document.file_url);
     setPreviewType(fileType);
     setIsPreviewOpen(true);
@@ -372,35 +401,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       // Store direct URL for buttons
       setPreviewDirectUrl(signedUrl);
 
-      // Para PDFs, criar blob URL para garantir visualização (não download)
-      // Isso força o navegador a visualizar em vez de baixar
+      // Para PDFs, usar URL assinada diretamente para que o viewer do navegador
+      // mostre o nome real do arquivo (extraído do path da URL) na barra de ferramentas
       if (fileType === 'pdf') {
-        try {
-          // Buscar o PDF e criar blob URL para forçar visualização
-          // NÃO usar credentials: 'include' pois causa erro CORS com Supabase
-          console.log('📥 Buscando PDF para criar blob URL no modal:', signedUrl);
-          const pdfResponse = await fetch(signedUrl, {
-            method: 'GET',
-            mode: 'cors',
-            // Removido credentials: 'include' para evitar erro CORS
-            headers: {
-              'Accept': 'application/pdf'
-            }
-          });
-          
-          if (!pdfResponse.ok) {
-            console.warn('⚠️ Não foi possível buscar PDF, usando URL assinada diretamente');
-            setPreviewUrl(signedUrl);
-          } else {
-            const pdfBlob = await pdfResponse.blob();
-            const pdfBlobUrl = URL.createObjectURL(new Blob([pdfBlob], { type: 'application/pdf' }));
-            console.log('✅ Blob URL criado no modal para PDF:', pdfBlobUrl);
-            setPreviewUrl(pdfBlobUrl);
-          }
-        } catch (error) {
-          console.warn('⚠️ Erro ao criar blob URL, usando URL assinada diretamente:', error);
-          setPreviewUrl(signedUrl);
-        }
+        setPreviewUrl(signedUrl);
       } else {
         // Fetch document and create blob URL for images
         const response = await fetch(signedUrl);
@@ -1005,6 +1009,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
           }
           setPreviewUrl("");
           setPreviewDirectUrl("");
+          setPreviewDownloadFileName("");
         }
         setIsPreviewOpen(open);
       }}>
@@ -1058,7 +1063,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                           Este tipo de arquivo não pode ser visualizado no navegador.
                         </p>
                         <Button asChild>
-                          <a href={previewDirectUrl} download className="inline-flex items-center gap-2">
+                          <a href={previewDirectUrl} download={previewDownloadFileName || true} className="inline-flex items-center gap-2">
                             <FileDown className="h-4 w-4" />
                             Baixar arquivo
                           </a>
@@ -1177,7 +1182,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                   <Button asChild variant="outline">
                     <a 
                       href={previewDirectUrl} 
-                      download
+                      download={previewDownloadFileName || true}
                       className="inline-flex items-center gap-2"
                     >
                       <FileDown className="h-4 w-4" />
@@ -1207,10 +1212,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
               
               <Button 
                 variant="outline" 
-                onClick={() => refetch()}
-                disabled={isLoading}
+                onClick={handleRefresh}
+                disabled={isLoading || isRefreshing}
               >
-                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 mr-2 ${(isLoading || isRefreshing) ? 'animate-spin' : ''}`} />
                 Atualizar
               </Button>
               

@@ -88,7 +88,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
       document_id: "",
       obrigatoriedade: "Obrigatório",
       carga_horaria: undefined,
-      modalidade: "Presencial",
+      modalidade: "N/A",
       regra_validade: "Sem validade",
     },
   });
@@ -262,7 +262,7 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
       document_id: "",
       obrigatoriedade: "Obrigatório",
       carga_horaria: undefined,
-      modalidade: "Presencial",
+      modalidade: "N/A",
       regra_validade: "Sem validade",
     });
     setEditingItem(null);
@@ -327,28 +327,31 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
       // Por enquanto, vamos usar valores padrão e permitir edição posterior
       let cargaHorariaCatalog: string | null = null;
       let validadeCatalog: string | null = null;
-      
+      let fullDoc: Record<string, unknown> | null = null;
+
       // Tentar buscar campos opcionais - se não existirem, usar null
       try {
-        // Usar uma query que não falha se os campos não existirem
-        const { data: fullDoc } = await supabase
+        const { data } = await supabase
           .from('documents_catalog')
           .select('*')
           .eq('id', documentId)
           .single();
-        
-        // Verificar se os campos existem no objeto retornado
+        fullDoc = data ?? null;
         if (fullDoc) {
           cargaHorariaCatalog = (fullDoc as any).carga_horaria || null;
           validadeCatalog = (fullDoc as any).validade || null;
         }
       } catch (e) {
-        // Campos opcionais podem não existir, usar valores padrão
         console.log('Campos opcionais não encontrados, usando valores padrão');
       }
 
-      // Extrair e converter os dados do catálogo
-      const modalidadeCatalog = documentData?.modality || null;
+      // Extrair modalidade do catálogo (suporta modality ou modalidade)
+      const modalidadeCatalog =
+        (documentData as any)?.modality ??
+        (documentData as any)?.modalidade ??
+        (fullDoc as any)?.modalidade ??
+        (fullDoc as any)?.modality ??
+        null;
 
       // Converter carga_horaria de texto para número
       const cargaHorariaNumber = convertCargaHorariaToNumber(cargaHorariaCatalog);
@@ -356,8 +359,8 @@ export const MatrixItemsTable = ({ matrixId, onClose }: MatrixItemsTableProps) =
       // Converter validade para formato esperado
       const regraValidade = convertValidadeToRegraValidade(validadeCatalog);
       
-      // Usar modalidade do catálogo ou padrão
-      const modalidade = modalidadeCatalog || "Presencial";
+      // Usar modalidade do catálogo quando existir; padrão é N/A
+      const modalidade = modalidadeCatalog || "N/A";
 
       // Criar o item com os dados do catálogo
       // Não incluir 'document' pois é apenas uma relação virtual, não uma coluna da tabela

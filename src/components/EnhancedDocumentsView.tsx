@@ -5,15 +5,37 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy, FileDown, Trash2 } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Download, Eye, Plus, XCircle, Copy, FileDown, Trash2, Archive, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { useDeleteCandidateDocument } from '@/hooks/useCandidates';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]+)?$/i;
+
+function getFileNameFromDoc(doc: {
+  file_url?: string | null;
+  arquivo_original?: string | null;
+  document_name?: string | null;
+}): string {
+  const sanitize = (n: string) => n.replace(/[\\/:*?"<>|]/g, '_').trim();
+
+  const fromPath = doc.file_url?.split('/').pop()?.split('?')[0]?.trim() || '';
+  if (fromPath && !UUID_RE.test(fromPath)) return sanitize(fromPath);
+
+  const arquivo = doc.arquivo_original?.trim();
+  if (arquivo && !UUID_RE.test(arquivo)) return sanitize(arquivo);
+
+  const ext = doc.file_url?.split('.').pop()?.split('?')[0]?.toLowerCase() || '';
+  const base = doc.document_name?.trim() || 'documento';
+  const safeBase = sanitize(base);
+  return ext ? `${safeBase}.${ext}` : safeBase;
+}
 
 interface EnhancedDocumentsViewProps {
   candidateId: string;
@@ -36,6 +58,7 @@ export const EnhancedDocumentsView = ({
 }: EnhancedDocumentsViewProps) => {
   const [activeTab, setActiveTab] = useState('all');
   const [deleteTarget, setDeleteTarget] = useState<{ candidateId: string; documentId: string } | null>(null);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const deleteCandidateDocument = useDeleteCandidateDocument();
@@ -901,6 +924,129 @@ export const EnhancedDocumentsView = ({
     }
   };
 
+  const handleDownloadConferidosZip = async () => {
+    try {
+      setIsDownloadingZip(true);
+
+      const aprovados = documents.filter(
+        (doc) => (doc.status === 'CONFERE' || doc.status === 'PARCIAL') && doc.candidateDocumentId
+      );
+
+      if (aprovados.length === 0) {
+        toast({
+          title: 'Nenhum documento disponível',
+          description: 'Não há documentos com status "Confere" ou "Parcial" para baixar.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const docIds = aprovados.map((d) => d.candidateDocumentId!);
+      const { data: candidateDocs, error: docsError } = await supabase
+        .from('candidate_documents')
+        .select('id, file_url, arquivo_original, document_name')
+        .in('id', docIds);
+
+      if (docsError) throw docsError;
+      if (!candidateDocs || candidateDocs.length === 0) {
+        toast({
+          title: 'Nenhum arquivo encontrado',
+          description: 'Os documentos não possuem arquivos anexados.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+      let filesAdded = 0;
+
+      for (const cdoc of candidateDocs) {
+        if (!cdoc.file_url) continue;
+
+        const normalizedPath = normalizeFileUrl(cdoc.file_url);
+        if (!normalizedPath) continue;
+
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from('candidate-documents')
+          .createSignedUrl(normalizedPath, 600);
+
+        if (signedError || !signedData?.signedUrl) {
+          console.warn('Erro ao gerar URL assinada para ZIP:', cdoc.id, signedError);
+          continue;
+        }
+
+        let signedUrl = signedData.signedUrl;
+        if (signedUrl.startsWith('/')) {
+          const supabaseUrl =
+            import.meta.env.VITE_SUPABASE_URL ||
+            'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+          signedUrl = `${supabaseUrl}/storage/v1${signedUrl}`;
+        }
+
+        try {
+          const resp = await fetch(signedUrl, { mode: 'cors' });
+          if (!resp.ok) {
+            console.warn('Falha ao baixar arquivo para ZIP:', cdoc.id, resp.status);
+            continue;
+          }
+          const blob = await resp.blob();
+
+          let fileName = getFileNameFromDoc(cdoc);
+          let fullPath = fileName;
+
+          let counter = 1;
+          while (usedNames.has(fullPath.toLowerCase())) {
+            const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
+            const base = ext ? fileName.slice(0, -ext.length) : fileName;
+            fullPath = `${base}_${counter}${ext}`;
+            counter++;
+          }
+          usedNames.add(fullPath.toLowerCase());
+
+          zip.file(fullPath, blob);
+          filesAdded++;
+        } catch (fetchErr) {
+          console.warn('Erro ao fazer fetch do arquivo para ZIP:', cdoc.id, fetchErr);
+        }
+      }
+
+      if (filesAdded === 0) {
+        toast({
+          title: 'Nenhum arquivo disponível',
+          description: 'Não foi possível baixar nenhum dos arquivos do armazenamento.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const safeName = (candidateName || 'candidato').replace(/[^a-zA-Z0-9À-ÿ ]/g, '_').trim();
+      const dateStr = format(new Date(), 'yyyyMMdd');
+      const zipFileName = `${safeName}_documentos_aprovados_${dateStr}.zip`;
+
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(zipBlob);
+      link.download = zipFileName;
+      link.click();
+      URL.revokeObjectURL(link.href);
+
+      toast({
+        title: 'Download concluído',
+        description: `${filesAdded} documento(s) baixado(s) em ZIP.`,
+      });
+    } catch (error: any) {
+      console.error('Erro ao gerar ZIP:', error);
+      toast({
+        title: 'Erro ao gerar ZIP',
+        description: error.message || 'Não foi possível gerar o arquivo ZIP.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Enhanced Header Section */}
@@ -961,6 +1107,20 @@ export const EnhancedDocumentsView = ({
               >
                 <Download className="h-4 w-4 mr-2" />
                 Exportar Pendentes
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={loading || isDownloadingZip || (summary.approved + summary.partial) === 0}
+                onClick={handleDownloadConferidosZip}
+                className="bg-white border-green-200 text-green-700 hover:bg-green-50"
+              >
+                {isDownloadingZip ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4 mr-2" />
+                )}
+                {isDownloadingZip ? 'Gerando ZIP...' : 'Baixar Aprovados (ZIP)'}
               </Button>
             </div>
           </div>
