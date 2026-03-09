@@ -12,8 +12,6 @@ import { Plus, Search, Edit, Trash2, Download, Upload, Settings } from "lucide-r
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useRef } from "react";
-import { MatrixForm } from "@/components/MatrixForm";
-import { MatrixItemsForm } from "@/components/MatrixItemsForm";
 
 const Matrix = () => {
   const navigate = useNavigate();
@@ -30,15 +28,12 @@ const Matrix = () => {
   const [selectedSolicitado, setSelectedSolicitado] = useState("");
   const [selectedUsuario, setSelectedUsuario] = useState("");
   const [matrixToDelete, setMatrixToDelete] = useState<any>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isItemsFormOpen, setIsItemsFormOpen] = useState(false);
-  const [selectedMatrix, setSelectedMatrix] = useState<any>(null);
 
-  // Obter valores únicos para filtros
-  const uniqueCargos = [...new Set(matrices.map(m => m.cargo))];
-  const uniqueEmpresas = [...new Set(matrices.map(m => m.empresa))];
-  const uniqueSolicitados = [...new Set(matrices.map(m => m.solicitado_por))];
-  const uniqueUsuarios = [...new Set(matrices.map(m => m.user_email))];
+  // Obter valores únicos para filtros (filtrando valores vazios, null ou undefined)
+  const uniqueCargos = [...new Set(matrices.map(m => m.cargo).filter(c => c && c.trim() !== ""))];
+  const uniqueEmpresas = [...new Set(matrices.map(m => m.empresa).filter(e => e && e.trim() !== ""))];
+  const uniqueSolicitados = [...new Set(matrices.map(m => m.solicitado_por).filter(s => s && s.trim() !== ""))];
+  const uniqueUsuarios = [...new Set(matrices.map(m => m.user_email).filter(u => u && u.trim() !== ""))];
 
   const handleDeleteMatrix = async () => {
     if (!matrixToDelete) return;
@@ -98,23 +93,11 @@ const Matrix = () => {
   };
 
   const handleEdit = (matrix: any) => {
-    setSelectedMatrix(matrix);
-    setIsFormOpen(true);
+    navigate(`/matrix/${matrix.id}`);
   };
 
   const handleManageItems = (matrix: any) => {
-    setSelectedMatrix(matrix);
-    setIsItemsFormOpen(true);
-  };
-
-  const handleFormClose = () => {
-    setIsFormOpen(false);
-    setSelectedMatrix(null);
-  };
-
-  const handleItemsFormClose = () => {
-    setIsItemsFormOpen(false);
-    setSelectedMatrix(null);
+    navigate(`/matrix/${matrix.id}`);
   };
 
   const formatDate = (dateString: string) => {
@@ -184,7 +167,7 @@ const Matrix = () => {
             <Upload className="h-4 w-4 mr-2" />
             {isImporting ? "Importando..." : "Importar Excel"}
           </Button>
-          <Button onClick={() => setIsFormOpen(true)}>
+          <Button onClick={() => navigate('/matrix/new')}>
             <Plus className="mr-2 h-4 w-4" />
             Nova Matriz
           </Button>
@@ -215,7 +198,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todos os cargos</SelectItem>
                 {uniqueCargos.map(cargo => (
-                  <SelectItem key={cargo} value={cargo}>{cargo}</SelectItem>
+                  <SelectItem key={cargo} value={cargo || "unknown"}>{cargo}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -227,7 +210,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todas as empresas</SelectItem>
                 {uniqueEmpresas.map(empresa => (
-                  <SelectItem key={empresa} value={empresa}>{empresa}</SelectItem>
+                  <SelectItem key={empresa} value={empresa || "unknown"}>{empresa}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -239,7 +222,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todos</SelectItem>
                 {uniqueSolicitados.map(solicitado => (
-                  <SelectItem key={solicitado} value={solicitado}>{solicitado}</SelectItem>
+                  <SelectItem key={solicitado} value={solicitado || "unknown"}>{solicitado}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -251,7 +234,7 @@ const Matrix = () => {
               <SelectContent>
                 <SelectItem value="all">Todos os usuários</SelectItem>
                 {uniqueUsuarios.map(usuario => (
-                  <SelectItem key={usuario} value={usuario}>{usuario}</SelectItem>
+                  <SelectItem key={usuario} value={usuario || "unknown"}>{usuario}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -268,7 +251,7 @@ const Matrix = () => {
             </Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {filteredMatrices.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground">
@@ -278,75 +261,191 @@ const Matrix = () => {
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Versão Matriz</TableHead>
-                  <TableHead>Cargo</TableHead>
-                  <TableHead>Empresa</TableHead>
-                  <TableHead>Solicitado por</TableHead>
-                  <TableHead>Usuário</TableHead>
-                  <TableHead>Qtd. Documentos</TableHead>
-                  <TableHead>Data de Criação</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredMatrices.map((matrix) => (
-                  <TableRow key={matrix.id}>
-                    <TableCell className="font-medium">{matrix.versao_matriz || "-"}</TableCell>
-                    <TableCell>{matrix.cargo}</TableCell>
-                    <TableCell>{matrix.empresa}</TableCell>
-                    <TableCell>{matrix.solicitado_por || "-"}</TableCell>
-                    <TableCell>{matrix.user_email}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">
-                        {matrix.documents_count || 0}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{formatDate(matrix.created_at)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleManageItems(matrix)}
-                          title="Gerenciar itens"
-                        >
-                          <Settings className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEdit(matrix)}
-                          title="Editar matriz"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleExportMatrix(matrix.id)}
-                          disabled={isExporting}
-                          title="Exportar matriz"
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setMatrixToDelete(matrix)}
-                          title="Excluir matriz"
-                          className="text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="space-y-6">
+              {/* Matrizes Ativas */}
+              <Card className="border-green-200 bg-green-50/30">
+                <CardHeader>
+                  <CardTitle className="text-lg font-bold text-green-900">
+                    Matrizes Ativas ({filteredMatrices.filter(m => m.active !== false).length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {filteredMatrices.filter(m => m.active !== false).length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">Nenhuma matriz ativa encontrada.</p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Versão Matriz</TableHead>
+                          <TableHead>Cargo</TableHead>
+                          <TableHead>Empresa</TableHead>
+                          <TableHead>Solicitado por</TableHead>
+                          <TableHead>Usuário</TableHead>
+                          <TableHead>Qtd. Documentos</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Data de Criação</TableHead>
+                          <TableHead className="text-right">Ações</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredMatrices.filter(m => m.active !== false).map((matrix) => (
+                          <TableRow key={matrix.id}>
+                            <TableCell className="font-medium">{matrix.versao_matriz || "-"}</TableCell>
+                            <TableCell>{matrix.cargo}</TableCell>
+                            <TableCell>{matrix.empresa}</TableCell>
+                            <TableCell>{matrix.solicitado_por || "-"}</TableCell>
+                            <TableCell>{matrix.user_email}</TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">
+                                {matrix.documents_count || 0}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className="bg-green-100 text-green-800 border-green-200">
+                                Ativa
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{formatDate(matrix.created_at)}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleManageItems(matrix)}
+                                  title="Gerenciar itens"
+                                >
+                                  <Settings className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEdit(matrix)}
+                                  title="Editar matriz"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleExportMatrix(matrix.id)}
+                                  disabled={isExporting}
+                                  title="Exportar matriz"
+                                >
+                                  <Download className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setMatrixToDelete(matrix)}
+                                  title="Excluir matriz"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Matrizes Inativas */}
+              <Card className="border-gray-300 bg-gray-50/30">
+                <CardHeader>
+                  <CardTitle className="text-lg font-bold text-gray-700">
+                    Matrizes Inativas ({filteredMatrices.filter(m => m.active === false).length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {filteredMatrices.filter(m => m.active === false).length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">Nenhuma matriz inativa encontrada.</p>
+                    </div>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Versão Matriz</TableHead>
+                          <TableHead>Cargo</TableHead>
+                          <TableHead>Empresa</TableHead>
+                          <TableHead>Solicitado por</TableHead>
+                          <TableHead>Usuário</TableHead>
+                          <TableHead>Qtd. Documentos</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Data de Criação</TableHead>
+                          <TableHead className="text-right">Ações</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredMatrices.filter(m => m.active === false).map((matrix) => (
+                          <TableRow key={matrix.id} className="opacity-75">
+                            <TableCell className="font-medium">{matrix.versao_matriz || "-"}</TableCell>
+                            <TableCell>{matrix.cargo}</TableCell>
+                            <TableCell>{matrix.empresa}</TableCell>
+                            <TableCell>{matrix.solicitado_por || "-"}</TableCell>
+                            <TableCell>{matrix.user_email}</TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">
+                                {matrix.documents_count || 0}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className="bg-gray-100 text-gray-600 border-gray-200">
+                                Inativa
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{formatDate(matrix.created_at)}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleManageItems(matrix)}
+                                  title="Gerenciar itens"
+                                >
+                                  <Settings className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEdit(matrix)}
+                                  title="Editar matriz"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleExportMatrix(matrix.id)}
+                                  disabled={isExporting}
+                                  title="Exportar matriz"
+                                >
+                                  <Download className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setMatrixToDelete(matrix)}
+                                  title="Excluir matriz"
+                                  className="text-destructive hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -375,19 +474,6 @@ const Matrix = () => {
         accept=".xlsx,.xls"
         onChange={handleFileSelect}
         className="hidden"
-      />
-
-      {/* Forms */}
-      <MatrixForm
-        matrix={selectedMatrix}
-        isOpen={isFormOpen}
-        onClose={handleFormClose}
-      />
-
-      <MatrixItemsForm
-        matrixId={selectedMatrix?.id || ""}
-        isOpen={isItemsFormOpen}
-        onClose={handleItemsFormClose}
       />
     </div>
   );

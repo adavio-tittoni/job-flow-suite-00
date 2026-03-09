@@ -77,7 +77,9 @@ export type Database = {
           carga_horaria_teorica: number | null
           carga_horaria_total: number | null
           catalog_document_id: string | null
+          codigo: string | null
           created_at: string
+          declaracao: boolean | null
           detail: string | null
           document_category: string | null
           document_name: string
@@ -90,8 +92,12 @@ export type Database = {
           issuing_authority: string | null
           link_validacao: string | null
           modality: string | null
+          processing_finished: boolean
+          processing_status: string | null
+          processing_error_message: string | null
           registration_number: string | null
           sigla_documento: string | null
+          tipo_de_codigo: string | null
           updated_at: string
         }
         Insert: {
@@ -101,7 +107,9 @@ export type Database = {
           carga_horaria_teorica?: number | null
           carga_horaria_total?: number | null
           catalog_document_id?: string | null
+          codigo?: string | null
           created_at?: string
+          declaracao?: boolean | null
           detail?: string | null
           document_category?: string | null
           document_name: string
@@ -114,8 +122,12 @@ export type Database = {
           issuing_authority?: string | null
           link_validacao?: string | null
           modality?: string | null
+          processing_finished?: boolean
+          processing_status?: string | null
+          processing_error_message?: string | null
           registration_number?: string | null
           sigla_documento?: string | null
+          tipo_de_codigo?: string | null
           updated_at?: string
         }
         Update: {
@@ -125,7 +137,9 @@ export type Database = {
           carga_horaria_teorica?: number | null
           carga_horaria_total?: number | null
           catalog_document_id?: string | null
+          codigo?: string | null
           created_at?: string
+          declaracao?: boolean | null
           detail?: string | null
           document_category?: string | null
           document_name?: string
@@ -138,8 +152,12 @@ export type Database = {
           issuing_authority?: string | null
           link_validacao?: string | null
           modality?: string | null
+          processing_finished?: boolean
+          processing_status?: string | null
+          processing_error_message?: string | null
           registration_number?: string | null
           sigla_documento?: string | null
+          tipo_de_codigo?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -518,6 +536,7 @@ export type Database = {
       }
       matrices: {
         Row: {
+          active: boolean
           cargo: string
           created_at: string | null
           created_by: string | null
@@ -528,6 +547,7 @@ export type Database = {
           versao_matriz: string
         }
         Insert: {
+          active?: boolean
           cargo: string
           created_at?: string | null
           created_by?: string | null
@@ -538,6 +558,7 @@ export type Database = {
           versao_matriz: string
         }
         Update: {
+          active?: boolean
           cargo?: string
           created_at?: string | null
           created_by?: string | null

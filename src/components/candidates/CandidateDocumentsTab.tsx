@@ -1,6 +1,54 @@
 import { useState, useEffect } from "react";
-import { Plus, Edit, Trash2, FileDown, Eye, Upload, RefreshCw } from "lucide-react";
+import { Plus, Trash2, FileDown, Eye, Upload, RefreshCw, Copy } from "lucide-react";
 import { format } from "date-fns";
+import * as XLSX from "xlsx";
+
+/** Verifica se o texto é ID do bucket (UUID) ou nome derivado dele (ex.: uuid.pdf). */
+function looksLikeBucketIdOrDerived(value: string | null | undefined): boolean {
+  if (!value?.trim()) return false;
+  const v = value.trim();
+  const uuidOnly = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(v) ||
+    /^[0-9a-f]{32}$/i.test(v) ||
+    (v.length <= 50 && /^[0-9a-f-]+$/i.test(v));
+  if (uuidOnly) return true;
+  const uuidWithExt = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-z0-9]+)?$/i.test(v) ||
+    /^[0-9a-f]{32}(\.[a-z0-9]+)?$/i.test(v);
+  return uuidWithExt;
+}
+
+/** Retorna o nome legível do documento para exibição (evita mostrar ID do bucket no h2/título). */
+function getDocumentDisplayName(doc: CandidateDocument): string {
+  const name = doc.document_name?.trim();
+  if (name && !looksLikeBucketIdOrDerived(name)) return name;
+  const arquivo = doc.arquivo_original?.trim();
+  if (arquivo && !looksLikeBucketIdOrDerived(arquivo)) return arquivo;
+  const fromPath = doc.file_url?.split("/").pop()?.split("?")[0] || "";
+  if (fromPath && !looksLikeBucketIdOrDerived(fromPath)) return fromPath;
+  return "Documento";
+}
+
+/**
+ * Extrai o nome real do arquivo armazenado no S3/Storage a partir de file_url ou arquivo_original.
+ * Prioriza o último segmento de file_url (que contém o nome salvo no bucket) e faz fallback
+ * para arquivo_original. Sanitiza caracteres inválidos para sistemas de arquivos.
+ */
+function getDownloadFileName(doc: CandidateDocument): string {
+  const sanitize = (n: string) => n.replace(/[\\/:*?"<>|]/g, '_').trim();
+
+  // 1. Último segmento de file_url (nome real no bucket)
+  const fromPath = doc.file_url?.split("/").pop()?.split("?")[0]?.trim() || "";
+  if (fromPath && !looksLikeBucketIdOrDerived(fromPath)) return sanitize(fromPath);
+
+  // 2. arquivo_original (nome original do upload)
+  const arquivo = doc.arquivo_original?.trim();
+  if (arquivo && !looksLikeBucketIdOrDerived(arquivo)) return sanitize(arquivo);
+
+  // 3. Fallback: document_name + extensão extraída de file_url
+  const ext = doc.file_url?.split(".").pop()?.split("?")[0]?.toLowerCase() || "";
+  const baseName = doc.document_name?.trim() || "documento";
+  const safeBase = sanitize(baseName);
+  return ext ? `${safeBase}.${ext}` : safeBase;
+}
 
 // Utility function to safely format dates
 const safeFormatDate = (dateString: string | null | undefined, formatStr: string = 'dd/MM/yyyy'): string => {
@@ -34,9 +82,11 @@ import { CandidateIndicators } from "./CandidateIndicators";
 import { EnhancedDocumentsView } from "../EnhancedDocumentsView";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useCandidateRequirementStatus, type RequirementStatus } from "@/hooks/useCandidateRequirementStatus";
+import { useCandidateRequirementStatus, type RequirementStatus, type RequirementStatusResult } from "@/hooks/useCandidateRequirementStatus";
 import { useN8nWebhookListener } from "@/hooks/useN8nWebhookListener";
 import { useQueryClient } from "@tanstack/react-query";
+import { useDocumentComparisons } from "@/hooks/useDocumentComparisons";
+import { useDocumentComparisonsRealtime } from "@/hooks/useDocumentComparisonsRealtime";
 
 interface CandidateDocumentsTabProps {
   candidateId: string;
@@ -62,16 +112,24 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   const [previewDirectUrl, setPreviewDirectUrl] = useState<string>("");
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [previewName, setPreviewName] = useState<string>("");
+  const [previewDownloadFileName, setPreviewDownloadFileName] = useState<string>("");
   const [previewType, setPreviewType] = useState<string>("");
   
   // Cache de URLs assinadas por documento (id -> URL)
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   
   const [prefilledData, setPrefilledData] = useState<Partial<CandidateDocument> | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { toast } = useToast();
 
   // Get requirement status for pending items
   const { data: requirementStatus } = useCandidateRequirementStatus(candidateId);
+  
+  // Get document comparisons to check if documents have been compared
+  const { data: documentComparisonsData } = useDocumentComparisons(candidateId);
+
+  // Realtime: when backend inserts into document_comparisons, refresh to show "Documento pronto"
+  useDocumentComparisonsRealtime(candidateId);
 
   // Fetch candidate matrix_id and listen for changes
   useEffect(() => {
@@ -123,6 +181,12 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
           console.log('Event type:', payload.eventType);
           console.log('New data:', payload.new);
           
+          // Don't refetch if form is open to prevent resetting form state
+          if (isFormOpen) {
+            console.log('Form is open, skipping refetch to prevent form reset');
+            return;
+          }
+          
           // Invalidar e refazer a query para atualizar a UI
           queryClient.invalidateQueries({ queryKey: ["candidate-documents", candidateId] });
           queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidateId] });
@@ -139,7 +203,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       console.log('Cleaning up realtime listener for candidate:', candidateId);
       supabase.removeChannel(channel);
     };
-  }, [candidateId, queryClient]);
+  }, [candidateId, queryClient, isFormOpen]);
 
   // Listen for candidate matrix changes via realtime
   useEffect(() => {
@@ -186,17 +250,12 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     if (!requirementStatus) return '-';
     
     // Find the requirement status for this document in pendingItems
-    const matchingRequirement = requirementStatus.pendingItems.find(req => 
+    const matchingRequirement = (requirementStatus as RequirementStatusResult).pendingItems.find(req => 
       req.existingCandidateDocument?.id === document.id ||
       (req.documentName === document.document_name && req.groupName === document.group_name)
     );
     
     return matchingRequirement?.observation || '-';
-  };
-
-  const handleEdit = (document: CandidateDocument) => {
-    setSelectedDocument(document);
-    setIsFormOpen(true);
   };
 
   const handleDelete = (id: string) => {
@@ -212,6 +271,74 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     }
   };
 
+  const handleRefresh = () => {
+    window.location.reload();
+  };
+
+  // Normalize file_url: extract relative path from full URL if needed
+  // This handles URLs from n8n that might be download URLs with query parameters
+  const normalizeFilePath = (fileUrl: string): string => {
+    // If it's already a relative path (e.g., "candidateId/filename.pdf"), return as is
+    if (!fileUrl.includes('http://') && !fileUrl.includes('https://') && !fileUrl.includes('supabase.co')) {
+      return fileUrl;
+    }
+    
+    // Remove query parameters (like ?download, ?token=, etc.) before parsing
+    const urlWithoutQuery = fileUrl.split('?')[0];
+    
+    // If it's a full URL, extract the relative path
+    // Examples:
+    // - https://xxx.supabase.co/storage/v1/object/public/candidate-documents/candidateId/file.pdf?download
+    // - https://xxx.supabase.co/storage/v1/object/sign/candidate-documents/candidateId/file.pdf?token=...
+    // Should become: candidateId/file.pdf
+    try {
+      const url = new URL(urlWithoutQuery);
+      const pathParts = url.pathname.split('/').filter(part => part !== ''); // Remove empty parts
+      
+      // Find the index of 'candidate-documents'
+      const bucketIndex = pathParts.findIndex(part => part === 'candidate-documents');
+      if (bucketIndex !== -1 && bucketIndex + 1 < pathParts.length) {
+        // Get everything after 'candidate-documents'
+        const relativePath = pathParts.slice(bucketIndex + 1).join('/');
+        console.log('Normalized path from URL:', { original: fileUrl, normalized: relativePath });
+        return relativePath;
+      }
+      
+      // Alternative: if it's /object/public/candidate-documents/... or /object/sign/candidate-documents/...
+      const objectIndex = pathParts.findIndex(part => part === 'object');
+      if (objectIndex !== -1) {
+        // Check for 'public' or 'sign' after 'object'
+        const publicOrSignIndex = pathParts.findIndex((part, idx) => 
+          idx > objectIndex && (part === 'public' || part === 'sign')
+        );
+        if (publicOrSignIndex !== -1) {
+          // Find 'candidate-documents' after 'public' or 'sign'
+          const bucketIndexAfter = pathParts.findIndex((part, idx) => 
+            idx > publicOrSignIndex && part === 'candidate-documents'
+          );
+          if (bucketIndexAfter !== -1 && bucketIndexAfter + 1 < pathParts.length) {
+            const relativePath = pathParts.slice(bucketIndexAfter + 1).join('/');
+            console.log('Normalized path from object URL:', { original: fileUrl, normalized: relativePath });
+            return relativePath;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse URL, trying regex fallback:', fileUrl, e);
+    }
+    
+    // Fallback: try to extract from common patterns (even with query params)
+    const match = urlWithoutQuery.match(/candidate-documents\/(.+)$/);
+    if (match && match[1]) {
+      console.log('Normalized path from regex:', { original: fileUrl, normalized: match[1] });
+      return match[1];
+    }
+    
+    // If all else fails, return as is (might work if it's already a relative path)
+    console.warn('Could not normalize file URL, using as-is:', fileUrl);
+    return fileUrl;
+  };
+
   const handleViewDocument = async (document: CandidateDocument) => {
     if (!document.file_url) {
       toast({
@@ -222,8 +349,8 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       return;
     }
 
-    // Open modal immediately and start loading
-    setPreviewName(document.document_name || document.file_url);
+    setPreviewName(getDocumentDisplayName(document));
+    setPreviewDownloadFileName(getDownloadFileName(document));
     const fileType = getFileType(document.file_url);
     setPreviewType(fileType);
     setIsPreviewOpen(true);
@@ -232,29 +359,61 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     setPreviewDirectUrl("");
 
     try {
+      const fileName = document.file_url.split('/').pop() || document.file_url;
+      
+      // Normalize file path - extract relative path if it's a full URL
+      // IMPORTANTE: Isso garante que mesmo URLs de download do n8n sejam normalizadas
+      const normalizedPath = normalizeFilePath(document.file_url);
+      console.log('🔍 Normalizando caminho do arquivo:', { 
+        original: document.file_url, 
+        normalized: normalizedPath,
+        documentId: document.id,
+        documentName: document.document_name
+      });
+      
+      // Verificar se o caminho normalizado é válido
+      if (!normalizedPath || normalizedPath.includes('http://') || normalizedPath.includes('https://')) {
+        throw new Error(`Caminho do arquivo inválido após normalização: ${normalizedPath}`);
+      }
+      
       const { data, error } = await supabase.storage
         .from('candidate-documents')
-        .createSignedUrl(document.file_url, 600); // 10 minutes expiration
+        .createSignedUrl(normalizedPath, 600); // 10 minutes expiration
 
-      if (error) throw error;
+      if (error) {
+        // Handle specific "Object not found" error with a user-friendly message
+        if (error.message?.includes('not found') || 
+            error.message?.includes('Object not found') ||
+            error.message?.toLowerCase().includes('object') && error.message?.toLowerCase().includes('not found')) {
+          throw new Error(`O arquivo "${fileName}" não foi encontrado no armazenamento. O documento pode ter sido removido ou nunca foi enviado corretamente.`);
+        }
+        throw error;
+      }
 
       // Ensure absolute URL
       let signedUrl = data.signedUrl;
       if (signedUrl.startsWith('/')) {
-        signedUrl = `https://qlcmxnajdrigntfmjelp.supabase.co/storage/v1${signedUrl}`;
+        // Extrair a URL base do Supabase do cliente
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+        signedUrl = `${supabaseUrl}/storage/v1${signedUrl}`;
       }
 
       // Store direct URL for buttons
       setPreviewDirectUrl(signedUrl);
 
-      // Para PDFs, usar URL assinada diretamente (evita bloqueio do Chrome)
-      // Para imagens, continuar usando Blob URL (funciona perfeitamente)
+      // Para PDFs, usar URL assinada diretamente para que o viewer do navegador
+      // mostre o nome real do arquivo (extraído do path da URL) na barra de ferramentas
       if (fileType === 'pdf') {
         setPreviewUrl(signedUrl);
       } else {
         // Fetch document and create blob URL for images
         const response = await fetch(signedUrl);
-        if (!response.ok) throw new Error('Failed to fetch document');
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error('Arquivo não encontrado no armazenamento');
+          }
+          throw new Error(`Falha ao buscar documento: ${response.statusText}`);
+        }
         
         const blob = await response.blob();
         const blobUrl = URL.createObjectURL(blob);
@@ -262,9 +421,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
         setPreviewUrl(blobUrl);
       }
     } catch (error: any) {
+      console.error('Error loading document:', error);
       toast({
         title: "Erro ao carregar documento",
-        description: error.message || "Não foi possível acessar o documento. Verifique se o arquivo ainda existe.",
+        description: error.message || "Não foi possível acessar o documento. O arquivo pode não existir no armazenamento.",
         variant: "destructive",
       });
       setIsPreviewOpen(false);
@@ -283,17 +443,47 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   // Helpers para URLs assinadas
   const ensureAbsoluteUrl = (signed: string) => {
     if (signed.startsWith('/')) {
-      return `https://qlcmxnajdrigntfmjelp.supabase.co/storage/v1${signed}`;
+      // Extrair a URL base do Supabase do cliente
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+      return `${supabaseUrl}/storage/v1${signed}`;
     }
     return signed;
   };
 
   const generateSignedUrl = async (filePath: string): Promise<string | null> => {
-    const { data, error } = await supabase.storage
-      .from('candidate-documents')
-      .createSignedUrl(filePath, 600); // 10 minutos
-    if (error) return null;
-    return ensureAbsoluteUrl(data.signedUrl);
+    try {
+      // Normalize file path - extract relative path if it's a full URL
+      const normalizedPath = normalizeFilePath(filePath);
+      console.log('🔗 Gerando URL assinada:', { 
+        original: filePath, 
+        normalized: normalizedPath 
+      });
+      
+      // Validar que o caminho normalizado não é uma URL completa
+      if (normalizedPath.includes('http://') || normalizedPath.includes('https://')) {
+        console.error('❌ Caminho normalizado ainda contém URL completa:', normalizedPath);
+        return null;
+      }
+      
+      const { data, error } = await supabase.storage
+        .from('candidate-documents')
+        .createSignedUrl(normalizedPath, 600); // 10 minutos
+      
+      if (error) {
+        // Log error but don't throw - some files might not exist
+        if (error.message?.includes('not found') || error.message?.includes('Object not found')) {
+          console.warn(`File not found in storage: ${filePath}`, error);
+        } else {
+          console.error(`Error creating signed URL for ${filePath}:`, error);
+        }
+        return null;
+      }
+      
+      return ensureAbsoluteUrl(data.signedUrl);
+    } catch (error) {
+      console.error(`Unexpected error creating signed URL for ${filePath}:`, error);
+      return null;
+    }
   };
 
   const refreshAllSignedUrls = async () => {
@@ -301,19 +491,32 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       setSignedUrls({});
       return;
     }
-    const entries = await Promise.all(
-      documents
-        .filter((d) => !!d.file_url)
-        .map(async (d) => {
+    
+    // Only generate URLs for documents that have file_url
+    const documentsWithFiles = documents.filter((d) => !!d.file_url);
+    
+    if (documentsWithFiles.length === 0) {
+      setSignedUrls({});
+      return;
+    }
+    
+    try {
+      const entries = await Promise.all(
+        documentsWithFiles.map(async (d) => {
           const url = await generateSignedUrl(d.file_url!);
           return [d.id, url] as const;
         })
-    );
-    const map: Record<string, string> = {};
-    entries.forEach(([id, url]) => {
-      if (url) map[id] = url;
-    });
-    setSignedUrls(map);
+      );
+      
+      const map: Record<string, string> = {};
+      entries.forEach(([id, url]) => {
+        if (url) map[id] = url;
+      });
+      setSignedUrls(map);
+    } catch (error) {
+      console.error('Error refreshing signed URLs:', error);
+      // Don't show toast here as this runs automatically
+    }
   };
 
   const handleFormClose = () => {
@@ -361,7 +564,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     return expiry.getTime() >= today.getTime(); // Show only non-expired documents
   });
 
-  const handleExportDocuments = () => {
+  const handleExportDocuments = async () => {
     if (!validDocuments || validDocuments.length === 0) {
       toast({
         title: "Nenhum documento",
@@ -371,30 +574,66 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       return;
     }
 
-    // Prepare CSV data (only valid documents, no observation)
-    const csvData = validDocuments.map(doc => ({
-      'Grupo': doc.group_name || '',
-      'Categoria': doc.document_category || 'N/A', // Always use document_category from catalog
-      'Tipo': doc.document_type || '',
-      'Documento': doc.document_name || '',
-      'Autoridade Emissora': doc.issuing_authority || '',
-      'Modalidade': doc.modality || '',
-      'Data Emissão': safeFormatDate(doc.issue_date),
-      'Data Validade': safeFormatDate(doc.expiry_date),
-      'Status de Validade': doc.expiry_date ? (() => {
-        const expiry = new Date(doc.expiry_date);
-        const today = new Date();
-        const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-        return diffDays < 0 ? 'Vencido' : diffDays <= 30 ? `Vence em ${diffDays} dias` : 'Válido';
-      })() : 'N/A',
-      'Arquivo Original': doc.arquivo_original || ''
-    }));
+    // Gerar URLs assinadas de download para cada documento (igual ao Exportar Excel)
+    const documentDownloadUrls: Record<string, string> = {};
+    const baseUrl = window.location.origin;
+
+    for (const doc of validDocuments) {
+      if (doc.file_url) {
+        const normalizedPath = normalizeFilePath(doc.file_url);
+        if (normalizedPath && !normalizedPath.startsWith('http')) {
+          try {
+            const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+              .from('candidate-documents')
+              .createSignedUrl(normalizedPath, 31536000); // 1 ano de validade
+
+            if (!signedUrlError && signedUrlData?.signedUrl) {
+              let signedUrl = signedUrlData.signedUrl;
+              if (signedUrl.startsWith('/')) {
+                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://uuorwhhvjxafrqdyrrzt.supabase.co';
+                signedUrl = `${supabaseUrl}/storage/v1${signedUrl}`;
+              }
+              documentDownloadUrls[doc.id] = signedUrl;
+            }
+          } catch (e) {
+            console.warn('Erro ao gerar URL assinada para documento:', doc.id, e);
+          }
+        }
+      }
+      // Fallback: URL de visualização no sistema
+      if (!documentDownloadUrls[doc.id]) {
+        documentDownloadUrls[doc.id] = `${baseUrl}/candidates/${candidateId}?tab=documents&viewDoc=${doc.id}`;
+      }
+    }
+
+    // Prepare CSV data (only valid documents, with URL Download like Exportar Excel)
+    const csvData = validDocuments.map(doc => {
+      const downloadUrl = documentDownloadUrls[doc.id] || '';
+      return {
+        'Grupo': doc.group_name || '',
+        'Categoria': doc.document_category || 'N/A',
+        'Tipo': doc.document_type || '',
+        'Documento': doc.document_name || '',
+        'Autoridade Emissora': doc.issuing_authority || '',
+        'Modalidade': doc.modality || '',
+        'Data Emissão': safeFormatDate(doc.issue_date),
+        'Data Validade': safeFormatDate(doc.expiry_date),
+        'Status de Validade': doc.expiry_date ? (() => {
+          const expiry = new Date(doc.expiry_date);
+          const today = new Date();
+          const diffDays = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays < 0 ? 'Vencido' : diffDays <= 30 ? `Vence em ${diffDays} dias` : 'Válido';
+        })() : 'N/A',
+        'Arquivo Original': doc.arquivo_original || '',
+        'URL Download': downloadUrl,
+      };
+    });
 
     // Convert to CSV
     const headers = Object.keys(csvData[0]);
     const csvContent = [
       '\uFEFF' + headers.join(';'), // Add BOM for UTF-8
-      ...csvData.map(row => headers.map(header => `"${row[header as keyof typeof row]}"`).join(';'))
+      ...csvData.map(row => headers.map(header => `"${(row[header as keyof typeof row] ?? '').toString().replace(/"/g, '""')}"`).join(';'))
     ].join('\n');
 
     // Download file
@@ -406,12 +645,25 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
 
     toast({
       title: "Exportação concluída",
-      description: "Lista de documentos exportada com sucesso.",
+      description: "Lista de documentos exportada com sucesso (incluindo URL de download).",
     });
   };
 
   const handleExportPending = async () => {
-    if (!requirementStatus || requirementStatus.pendingItems.length === 0) {
+    console.log('📤 Exportando documentos pendentes...', { requirementStatus });
+    
+    if (!requirementStatus) {
+      toast({
+        title: "Aguardando dados",
+        description: "Os dados ainda estão sendo carregados. Aguarde um momento e tente novamente.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const pendingItems = (requirementStatus as RequirementStatusResult).pendingItems || [];
+    
+    if (pendingItems.length === 0) {
       toast({
         title: "Nenhum documento pendente",
         description: "Não há documentos pendentes para exportar.",
@@ -419,6 +671,8 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       });
       return;
     }
+
+    console.log('📋 Documentos pendentes encontrados:', pendingItems.length);
 
     // Fetch candidate and matrix information
     let matrixInfo = "Não vinculado";
@@ -449,8 +703,8 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     const now = new Date();
     const currentDateTime = format(now, 'dd/MM/yy - HH:mm');
 
-    // Prepare CSV data for pending documents
-    const csvData = requirementStatus.pendingItems.map(item => ({
+    // Prepare Excel data for pending documents
+    const excelData = pendingItems.map(item => ({
       'Departamento': item.groupName || '',
       'Tipo': item.documentCategory || '-',
       'Documento': item.documentName || '',
@@ -467,29 +721,63 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       'Horas Atuais': item.actualHours?.toString() || ''
     }));
 
-    // Convert to CSV
-    const headers = Object.keys(csvData[0]);
-    const csvContent = [
-      '\uFEFF' + 'DOCUMENTOS PENDENTES', // Add BOM for UTF-8 + header
-      `Candidato: ${candidateName}`,
-      `Matriz: ${matrixInfo}`,
-      `Data/Hora: ${currentDateTime}`,
-      '', // Empty line
-      headers.join(';'),
-      ...csvData.map(row => headers.map(header => `"${row[header as keyof typeof row]}"`).join(';'))
-    ].join('\n');
+    try {
+      // Create workbook
+      const workbook = XLSX.utils.book_new();
 
-    // Download file
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `documentos_pendentes_${new Date().getTime()}.csv`;
-    link.click();
+      // Prepare header information
+      const headerInfo = [
+        ['DOCUMENTOS PENDENTES'],
+        [`Candidato: ${candidateName}`],
+        [`Matriz: ${matrixInfo}`],
+        [`Data/Hora: ${currentDateTime}`],
+        [], // Empty row
+      ];
 
-    toast({
-      title: "Exportação concluída",
-      description: "Lista de documentos pendentes exportada com sucesso.",
-    });
+      // Create worksheet starting with header info
+      const worksheet = XLSX.utils.aoa_to_sheet(headerInfo);
+      
+      // Add data starting after header rows (row 6, index 5)
+      XLSX.utils.sheet_add_json(worksheet, excelData, { 
+        origin: 'A6', 
+        skipHeader: false 
+      });
+      
+      // Set column widths for better readability
+      const colWidths = [
+        { wch: 20 }, // Departamento
+        { wch: 15 }, // Tipo
+        { wch: 40 }, // Documento
+        { wch: 15 }, // Obrigatoriedade
+        { wch: 12 }, // Status
+        { wch: 50 }, // Observação
+        { wch: 15 }, // Validade
+        { wch: 15 }, // Horas Requeridas
+        { wch: 15 }, // Horas Atuais
+      ];
+      worksheet['!cols'] = colWidths;
+
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Documentos Pendentes');
+
+      // Generate filename with timestamp
+      const fileName = `documentos_pendentes_${candidateName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().getTime()}.xlsx`;
+
+      // Write file
+      XLSX.writeFile(workbook, fileName);
+
+      toast({
+        title: "Exportação concluída",
+        description: `${pendingItems.length} documento(s) pendente(s) exportado(s) em Excel com sucesso.`,
+      });
+    } catch (error: any) {
+      console.error('Error exporting to Excel:', error);
+      toast({
+        title: "Erro ao exportar",
+        description: error.message || "Não foi possível exportar os documentos pendentes.",
+        variant: "destructive",
+      });
+    }
   };
 
   const getExpiryStatus = (expiryDate?: string) => {
@@ -505,9 +793,93 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
     } else if (diffDays <= 30) {
       return <Badge variant="secondary">Vence em {diffDays} dias</Badge>;
     } else {
-      return <Badge variant="info">Válido</Badge>;
+      return <Badge variant="default">Válido</Badge>;
     }
   };
+
+  // Get comparison status for a document
+  const getComparisonStatus = (documentId: string): string | null => {
+    if (!documentComparisonsData?.comparisons) return null;
+    
+    const comparison = documentComparisonsData.comparisons.find(
+      (comp) => comp.candidate_document_id === documentId
+    );
+    
+    return comparison?.status || null;
+  };
+
+  // Get comparison status badge (whitespace-nowrap + padding para não quebrar texto)
+  const badgeClass = "whitespace-nowrap px-3 py-1.5 text-sm font-medium";
+  const getComparisonStatusBadge = (status: string | null) => {
+    if (!status) {
+      return <Badge variant="outline" className={badgeClass}>Documento não exigido</Badge>;
+    }
+    
+    switch (status) {
+      case 'CONFERE':
+        return <Badge className={`bg-green-100 text-green-800 ${badgeClass}`}>Confere</Badge>;
+      case 'PARCIAL':
+        return <Badge className={`bg-yellow-100 text-yellow-800 ${badgeClass}`}>Parcial</Badge>;
+      case 'PENDENTE':
+        return <Badge className={`bg-red-100 text-red-800 ${badgeClass}`}>Pendente</Badge>;
+      default:
+        return <Badge variant="outline" className={badgeClass}>Documento não exigido</Badge>;
+    }
+  };
+
+  // Função para obter prioridade do status (menor = maior prioridade)
+  const getStatusPriority = (status: string | null | undefined): number => {
+    if (status === 'CONFERE') return 0;
+    if (status === 'PARCIAL') return 1;
+    return 2; // PENDENTE ou qualquer outro
+  };
+
+  // Obter o Set de candidate_document_id que são "vencedores" (aparecem na tabela de cima)
+  // Um documento é "vencedor" se ele é o documento com maior prioridade para seu matrix_item_id
+  const getWinnerDocumentIds = (): Set<string> => {
+    if (!documentComparisonsData?.comparisons) return new Set();
+    
+    const comparisons = documentComparisonsData.comparisons;
+    
+    // Agrupar por matrix_item_id
+    const byMatrixItem = new Map<string, typeof comparisons>();
+    for (const comp of comparisons) {
+      if (!comp.matrix_item_id) continue;
+      const existing = byMatrixItem.get(comp.matrix_item_id) || [];
+      existing.push(comp);
+      byMatrixItem.set(comp.matrix_item_id, existing);
+    }
+    
+    // Para cada grupo, encontrar o "vencedor" (maior prioridade, depois mais recente)
+    const winnerIds = new Set<string>();
+    for (const [, comps] of byMatrixItem) {
+      const sorted = [...comps].sort((a, b) => {
+        // Primeiro ordenar por prioridade de status
+        const priorityA = getStatusPriority(a.status);
+        const priorityB = getStatusPriority(b.status);
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
+        }
+        // Se mesmo status, ordenar por data mais antiga (primeiro documento comparado prevalece)
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateA - dateB;
+      });
+      
+      // O primeiro é o "vencedor"
+      const winner = sorted[0];
+      if (winner?.candidate_document_id) {
+        winnerIds.add(winner.candidate_document_id);
+      }
+    }
+    
+    return winnerIds;
+  };
+
+  // Tabela inferior: mostrar documentos que NÃO são "vencedores" da comparação
+  // Isso inclui: documentos não comparados E documentos que foram encavalados (existe outro Confere/Parcial para o mesmo requisito)
+  const winnerDocumentIds = getWinnerDocumentIds();
+  const documentsToShow = validDocuments.filter((doc) => !winnerDocumentIds.has(doc.id));
 
   // Pré-gerar URLs assinadas e atualizar periodicamente
   useEffect(() => {
@@ -525,14 +897,61 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
   }, [documents]);
 
   const handleOpenInNewTab = async (doc: CandidateDocument) => {
-    if (!doc.file_url) return;
+    if (!doc.file_url) {
+      toast({
+        title: "Arquivo não encontrado",
+        description: "Este documento não possui arquivo anexado.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     const url = await generateSignedUrl(doc.file_url);
     if (url) {
       setSignedUrls((prev) => ({ ...prev, [doc.id]: url }));
       window.open(url, '_blank', 'noopener,noreferrer');
     } else {
-      // fallback para o modal de preview
+      // If URL generation failed, try to show in preview modal with better error handling
+      toast({
+        title: "Arquivo não encontrado",
+        description: "O arquivo não foi encontrado no armazenamento. Tentando abrir no visualizador...",
+        variant: "default",
+      });
       handleViewDocument(doc);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      const currentUrl = window.location.href;
+      await navigator.clipboard.writeText(currentUrl);
+      toast({
+        title: "Link copiado!",
+        description: "O link desta página foi copiado para a área de transferência.",
+      });
+    } catch (error) {
+      // Fallback para navegadores mais antigos
+      const currentUrl = window.location.href;
+      const textArea = document.createElement('textarea');
+      textArea.value = currentUrl;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        toast({
+          title: "Link copiado!",
+          description: "O link desta página foi copiado para a área de transferência.",
+        });
+      } catch (err) {
+        toast({
+          title: "Erro ao copiar link",
+          description: "Não foi possível copiar o link. Tente novamente.",
+          variant: "destructive",
+        });
+      }
+      document.body.removeChild(textArea);
     }
   };
 
@@ -549,6 +968,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
       <EnhancedDocumentsView 
         candidateId={candidateId}
         matrixId={candidateMatrixId}
+        candidateName={candidateName}
         onAddDocument={(catalogDocId) => {
           // Buscar dados do documento do catálogo para preencher o formulário
           supabase
@@ -563,7 +983,6 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                   group_name: data.group_name,
                   document_category: data.document_category,
                   document_type: data.document_type,
-                  codigo: data.codigo,
                   catalog_document_id: catalogDocId,
                 });
                 setIsFormOpen(true);
@@ -576,17 +995,21 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
             handleViewDocument(doc);
           }
         }}
+        onExportPending={handleExportPending}
+        onCopyLink={handleCopyLink}
       />
 
       {/* Document Preview Modal */}
       <Dialog open={isPreviewOpen} onOpenChange={(open) => {
         if (!open && previewUrl) {
-          // Clean up blob URL when closing modal (only for images)
-          if (previewType === 'image') {
+          // Clean up blob URL when closing modal (for both images and PDFs)
+          if (previewUrl.startsWith('blob:')) {
             URL.revokeObjectURL(previewUrl);
+            console.log('🧹 Blob URL revogado ao fechar modal');
           }
           setPreviewUrl("");
           setPreviewDirectUrl("");
+          setPreviewDownloadFileName("");
         }
         setIsPreviewOpen(open);
       }}>
@@ -615,11 +1038,12 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                       data={previewUrl}
                       type="application/pdf"
                       className="w-full h-full min-h-[400px]"
+                      title={previewName}
                     >
                       <iframe
                         src={previewUrl}
                         className="w-full h-full min-h-[400px]"
-                        title="PDF Preview"
+                        title={previewName}
                       />
                     </object>
                   ) : previewType === 'image' ? (
@@ -639,7 +1063,7 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                           Este tipo de arquivo não pode ser visualizado no navegador.
                         </p>
                         <Button asChild>
-                          <a href={previewDirectUrl} download className="inline-flex items-center gap-2">
+                          <a href={previewDirectUrl} download={previewDownloadFileName || true} className="inline-flex items-center gap-2">
                             <FileDown className="h-4 w-4" />
                             Baixar arquivo
                           </a>
@@ -651,21 +1075,114 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                 
                 {/* Action buttons */}
                 <div className="flex gap-2 mt-4 pt-4 border-t">
-                  <Button asChild variant="outline">
-                    <a 
-                      href={previewDirectUrl} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2"
-                    >
-                      <Eye className="h-4 w-4" />
-                      Abrir em nova aba
-                    </a>
+                  <Button 
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        setIsLoadingPreview(true);
+                        
+                        // Se já temos previewUrl (blob URL do modal), usar ele diretamente
+                        if (previewUrl && previewUrl.startsWith('blob:')) {
+                          console.log('✅ Usando blob URL existente do modal:', previewUrl);
+                          const newWindow = window.open(previewUrl, '_blank', 'noopener,noreferrer');
+                          if (!newWindow) {
+                            throw new Error('Popup bloqueado. Permita popups para este site.');
+                          }
+                          return; // Sair da função, não precisa buscar novamente
+                        }
+                        
+                        // Buscar o arquivo e criar um blob URL para forçar visualização
+                        console.log('📥 Buscando arquivo para criar blob URL:', previewDirectUrl);
+                        
+                        // NÃO usar credentials: 'include' pois causa erro CORS com Supabase signed URLs
+                        // A URL assinada já contém o token de autenticação na query string
+                        const response = await fetch(previewDirectUrl, {
+                          method: 'GET',
+                          mode: 'cors',
+                          // Removido credentials: 'include' para evitar erro CORS
+                          headers: {
+                            'Accept': 'application/pdf,application/octet-stream,*/*'
+                          },
+                          cache: 'no-cache'
+                        });
+                        
+                        if (!response.ok) {
+                          console.error('❌ Erro ao buscar arquivo:', {
+                            status: response.status,
+                            statusText: response.statusText,
+                            url: previewDirectUrl
+                          });
+                          throw new Error(`Erro ao buscar arquivo: ${response.status} ${response.statusText}`);
+                        }
+                        
+                        // Verificar o Content-Type da resposta
+                        const contentType = response.headers.get('content-type') || 'application/pdf';
+                        console.log('📄 Content-Type da resposta:', contentType);
+                        
+                        // Obter o blob do arquivo
+                        const blob = await response.blob();
+                        console.log('✅ Blob obtido:', { 
+                          type: blob.type, 
+                          size: blob.size,
+                          originalContentType: contentType
+                        });
+                        
+                        // Forçar o tipo MIME correto para PDF (importante para visualização)
+                        const pdfBlob = new Blob([blob], { type: 'application/pdf' });
+                        
+                        // Criar blob URL
+                        const blobUrl = URL.createObjectURL(pdfBlob);
+                        console.log('✅ Blob URL criado para visualização:', blobUrl);
+                        
+                        // Abrir o blob URL diretamente - o navegador deve tentar visualizar
+                        // O blob URL não tem headers HTTP, então não pode forçar download
+                        const newWindow = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+                        
+                        if (!newWindow) {
+                          URL.revokeObjectURL(blobUrl);
+                          throw new Error('Popup bloqueado. Permita popups para este site.');
+                        }
+                        
+                        // Limpar o blob URL quando a janela for fechada ou após um tempo
+                        const cleanup = () => {
+                          URL.revokeObjectURL(blobUrl);
+                        };
+                        
+                        // Tentar detectar quando a janela é fechada
+                        const checkWindow = setInterval(() => {
+                          if (newWindow.closed) {
+                            clearInterval(checkWindow);
+                            cleanup();
+                          }
+                        }, 1000);
+                        
+                        // Fallback: limpar após 10 minutos
+                        setTimeout(() => {
+                          clearInterval(checkWindow);
+                          cleanup();
+                        }, 600000);
+                        
+                      } catch (error) {
+                        console.error('Erro ao abrir documento:', error);
+                        toast({
+                          title: "Erro",
+                          description: error instanceof Error ? error.message : "Não foi possível abrir o documento em nova aba.",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setIsLoadingPreview(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-2"
+                    disabled={isLoadingPreview || !previewDirectUrl}
+                  >
+                    <Eye className="h-4 w-4" />
+                    {isLoadingPreview ? 'Carregando...' : 'Abrir em nova aba'}
                   </Button>
                   <Button asChild variant="outline">
                     <a 
                       href={previewDirectUrl} 
-                      download
+                      download={previewDownloadFileName || true}
                       className="inline-flex items-center gap-2"
                     >
                       <FileDown className="h-4 w-4" />
@@ -695,10 +1212,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
               
               <Button 
                 variant="outline" 
-                onClick={() => refetch()}
-                disabled={isLoading}
+                onClick={handleRefresh}
+                disabled={isLoading || isRefreshing}
               >
-                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`h-4 w-4 mr-2 ${(isLoading || isRefreshing) ? 'animate-spin' : ''}`} />
                 Atualizar
               </Button>
               
@@ -733,33 +1250,35 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
         </div>
       </CardHeader>
       <CardContent>
-        {validDocuments.length === 0 ? (
+        {documentsToShow.length === 0 ? (
           <div className="text-center py-8">
-            <p className="text-muted-foreground">Nenhum documento cadastrado</p>
+            <p className="text-muted-foreground">Nenhum documento não comparado</p>
           </div>
         ) : (
-          <div className="rounded-md border">
-            <Table>
+          <div className="rounded-md border overflow-x-auto">
+            <Table className="min-w-[1000px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead>Sigla</TableHead>
-                      <TableHead>Código</TableHead>
-                      <TableHead>Documento</TableHead>
-                      <TableHead>Horas Total</TableHead>
-                      <TableHead>Modalidade</TableHead>
-                      <TableHead>Data Emissão</TableHead>
-                      <TableHead>Data Validade</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Ações</TableHead>
+                      <TableHead className="min-w-[100px]">Categoria</TableHead>
+                      <TableHead className="min-w-[90px]">Sigla</TableHead>
+                      <TableHead className="min-w-[110px]">Tipo Código</TableHead>
+                      <TableHead className="min-w-[240px]">Documento</TableHead>
+                      <TableHead className="min-w-[85px]">Horas Total</TableHead>
+                      <TableHead className="min-w-[130px]">Modalidade</TableHead>
+                      <TableHead className="min-w-[100px]">Data Emissão</TableHead>
+                      <TableHead className="min-w-[105px]">Data Validade</TableHead>
+                      <TableHead className="min-w-[115px]">Validade Status</TableHead>
+                      <TableHead className="min-w-[220px]">Status</TableHead>
+                      <TableHead className="min-w-[100px]">Observação</TableHead>
+                      <TableHead className="min-w-[120px]">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
               <TableBody>
-                {validDocuments.map((document) => (
+                {documentsToShow.map((document) => (
                   <TableRow key={document.id}>
                      <TableCell>{document.document_category || "-"}</TableCell>
                      <TableCell>{document.sigla_documento || "N/A"}</TableCell>
-                     <TableCell className="font-mono">{document.codigo || "-"}</TableCell>
+                     <TableCell className="font-mono">{document.tipo_de_codigo || "-"}</TableCell>
                      <TableCell className="font-medium">{document.document_name}</TableCell>
                      <TableCell>{document.carga_horaria_total ? `${document.carga_horaria_total}h` : "-"}</TableCell>
                      <TableCell>{document.modality || "-"}</TableCell>
@@ -772,34 +1291,58 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
                      <TableCell>
                        {getExpiryStatus(document.expiry_date)}
                      </TableCell>
-                    <TableCell>
+                     <TableCell className="py-3 align-middle">
+                       <div className="flex flex-wrap items-center gap-2 min-h-[36px]">
+                         {getComparisonStatus(document.id)
+                           ? getComparisonStatusBadge(getComparisonStatus(document.id))
+                           : document.processing_status === 'sent_for_processing' || document.processing_finished === false
+                             ? <Badge variant="secondary" className="whitespace-nowrap px-3 py-1.5 text-sm font-medium">Enviados para processamento</Badge>
+                             : document.processing_status === 'error'
+                               ? (
+                                 <span className="inline-flex flex-col gap-1">
+                                   <Badge variant="destructive" className="whitespace-nowrap px-3 py-1.5 text-sm font-medium">Erro no processamento</Badge>
+                                   {document.processing_error_message && (
+                                     <span className="text-xs text-muted-foreground max-w-[240px] truncate block" title={document.processing_error_message}>
+                                       {document.processing_error_message}
+                                     </span>
+                                   )}
+                                 </span>
+                               )
+                               : getComparisonStatusBadge(null)}
+                       </div>
+                     </TableCell>
+                     <TableCell className="py-3">
+                       {document.declaracao === true ? (
+                         <Badge className="bg-blue-100 text-blue-800 whitespace-nowrap px-3 py-1.5 text-sm font-medium">Declaração</Badge>
+                       ) : (
+                         <span className="text-muted-foreground">-</span>
+                       )}
+                     </TableCell>
+                    <TableCell className="py-3">
                       <div className="flex gap-2">
                         {document.file_url && (
-                          signedUrls[document.id] ? (
-                            <Button asChild variant="ghost" size="sm" title="Abrir em nova aba">
-                              <a href={signedUrls[document.id]} target="_blank" rel="noopener noreferrer">
-                                <Eye className="h-4 w-4" />
-                              </a>
-                            </Button>
-                          ) : (
+                          <>
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleOpenInNewTab(document)}
-                              title="Abrir em nova aba"
+                              onClick={() => handleViewDocument(document)}
+                              title="Visualizar documento"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
-                          )
+                            {signedUrls[document.id] && (
+                              <Button asChild variant="ghost" size="sm" title="Baixar documento">
+                                <a 
+                                  href={signedUrls[document.id]} 
+                                  download
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <FileDown className="h-4 w-4" />
+                                </a>
+                              </Button>
+                            )}
+                          </>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEdit(document)}
-                          title="Editar documento"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"

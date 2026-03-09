@@ -70,16 +70,24 @@ export const useN8nWebhookListener = () => {
 
   const handleDocumentUpdate = async (document: any) => {
     try {
-      // Verificar se o documento foi atualizado com dados reais
-      if (document.document_type !== 'Processando...' && document.document_name) {
-        // Invalidar queries para forçar atualização da UI
+      // Verificar se o documento foi atualizado com dados reais ou processing_status mudou
+      const processingDone = document.processing_status === 'processed' || document.processing_status === 'error';
+      const documentProcessed = document.document_type !== 'Processando...' && document.document_name;
+
+      if (documentProcessed || processingDone) {
+        const candidateId = document.candidate_id;
         await queryClient.invalidateQueries({ queryKey: ["candidate-documents"] });
+        if (candidateId) {
+          await queryClient.invalidateQueries({ queryKey: ["document-comparisons", candidateId] });
+        }
         await queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status"] });
-        
-        toast({
-          title: "Documento processado",
-          description: `O documento "${document.document_name}" foi processado com sucesso!`,
-        });
+
+        if (documentProcessed && !document.processing_status) {
+          toast({
+            title: "Documento processado",
+            description: `O documento "${document.document_name}" foi processado com sucesso!`,
+          });
+        }
       }
     } catch (error: any) {
       console.error('Error handling document update:', error);

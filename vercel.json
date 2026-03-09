@@ -12,5 +12,19 @@
   },
   "env": {
     "NODE_VERSION": "18"
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/js/:path*",
+      "destination": "/js/:path*"
+    },
+    {
+      "source": "/assets/:path*",
+      "destination": "/assets/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }

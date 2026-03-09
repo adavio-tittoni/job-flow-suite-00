@@ -2,22 +2,13 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { AlertCircle, CheckCircle, XCircle, TrendingUp, Users, Target, Clock } from "lucide-react";
+import { AlertCircle, CheckCircle, XCircle, Target, Clock, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
-import { useCandidateRequirementStatus } from "@/hooks/useCandidateRequirementStatus";
 import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
-
-interface Candidate {
-  id: string;
-  name: string;
-  role_title: string;
-  photo_url: string;
-  notes: string;
-}
+import { useDeleteCandidateDocument } from "@/hooks/useCandidates";
 
 interface MatrixItem {
   id: string;
@@ -38,35 +29,18 @@ interface CandidateMatrixComparisonProps {
 }
 
 const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixComparisonProps) => {
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [matrixItems, setMatrixItems] = useState<MatrixItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!matrixId) return;
+      if (!matrixId) {
+        setLoading(false);
+        return;
+      }
       
       try {
         setLoading(true);
-
-        // Buscar candidatos vinculados à vaga
-        const { data: vacancyCandidates, error: vacancyError } = await supabase
-          .from('vacancy_candidates')
-          .select(`
-            candidates!inner (
-              id,
-              name,
-              role_title,
-              photo_url,
-              notes
-            )
-          `)
-          .eq('vacancy_id', vacancyId);
-
-        if (vacancyError) throw vacancyError;
-
-        const candidatesData = vacancyCandidates?.map(item => item.candidates) || [];
-        setCandidates(candidatesData);
 
         // Buscar itens da matriz
         const { data: matrixData, error: matrixError } = await supabase
@@ -78,9 +52,16 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
             modalidade,
             regra_validade,
             documents_catalog!inner (
+              id,
               name,
+              nome_curso,
+              codigo,
+              sigla,
+              sigla_documento,
               document_category,
-              document_type
+              document_type,
+              categoria,
+              group_name
             )
           `)
           .eq('matrix_id', matrixId);
@@ -96,32 +77,7 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
     };
 
     fetchData();
-  }, [vacancyId, matrixId]);
-
-  const getInitials = (name: string) => {
-    return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
-  };
-
-  const getProgressVariant = (percentage: number) => {
-    if (percentage >= 80) return "success";
-    if (percentage >= 50) return "warning";
-    return "danger";
-  };
-
-  const getCompatibilityLevel = (percentage: number) => {
-    if (percentage >= 90) return { level: "Excelente", color: "bg-green-100 text-green-800", icon: CheckCircle };
-    if (percentage >= 70) return { level: "Boa", color: "bg-blue-100 text-blue-800", icon: TrendingUp };
-    if (percentage >= 50) return { level: "Regular", color: "bg-yellow-100 text-yellow-800", icon: AlertCircle };
-    return { level: "Baixa", color: "bg-red-100 text-red-800", icon: XCircle };
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <p className="text-muted-foreground">Carregando comparação...</p>
-      </div>
-    );
-  }
+  }, [matrixId]);
 
   if (!matrixId) {
     return (
@@ -132,135 +88,23 @@ const CandidateMatrixComparison = ({ vacancyId, matrixId }: CandidateMatrixCompa
     );
   }
 
-  if (candidates.length === 0) {
-    return (
-      <div className="text-center py-8">
-        <Users className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        <p className="text-muted-foreground">Adicione candidatos à vaga para ver a comparação.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Comparação com Matriz</h3>
-        <Badge variant="outline">
-          {matrixItems.length} requisitos
-        </Badge>
+        {!loading && (
+          <Badge variant="outline">
+            {matrixItems.length} requisitos
+          </Badge>
+        )}
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="overview">Visão Geral</TabsTrigger>
-          <TabsTrigger value="detailed">Detalhado</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {candidates.map((candidate) => (
-              <CandidateOverviewCard 
-                key={candidate.id} 
-                candidate={candidate} 
-                matrixItems={matrixItems}
-                getInitials={getInitials}
-                getProgressVariant={getProgressVariant}
-                getCompatibilityLevel={getCompatibilityLevel}
-              />
-            ))}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="detailed" className="space-y-4">
-          <DetailedComparisonTable vacancyId={vacancyId} matrixId={matrixId} />
-        </TabsContent>
-      </Tabs>
+      <DetailedComparisonTable vacancyId={vacancyId} matrixId={matrixId} />
     </div>
   );
 };
 
-interface CandidateOverviewCardProps {
-  candidate: Candidate;
-  matrixItems: MatrixItem[];
-  getInitials: (name: string) => string;
-  getProgressVariant: (percentage: number) => string;
-  getCompatibilityLevel: (percentage: number) => { level: string; color: string; icon: any };
-}
 
-const CandidateOverviewCard = ({ candidate, matrixItems, getInitials, getProgressVariant, getCompatibilityLevel }: CandidateOverviewCardProps) => {
-  const { data: adherenceData, isLoading } = useCandidateRequirementStatus(candidate.id);
-  
-  if (isLoading) {
-    return (
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center space-x-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-            <span className="text-sm text-muted-foreground">Calculando...</span>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const compatibility = getCompatibilityLevel(adherenceData?.overall.adherencePercentage || 0);
-  const IconComponent = compatibility.icon;
-
-  return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <Avatar className="h-10 w-10">
-            <AvatarImage src={candidate.photo_url} />
-            <AvatarFallback>
-              {getInitials(candidate.name)}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1 min-w-0">
-            <h4 className="font-medium truncate">{candidate.name}</h4>
-            {candidate.role_title && (
-              <p className="text-sm text-muted-foreground truncate">{candidate.role_title}</p>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Compatibilidade:</span>
-            <Badge className={compatibility.color}>
-              <IconComponent className="h-3 w-3 mr-1" />
-              {compatibility.level}
-            </Badge>
-          </div>
-
-          <div>
-            <div className="flex justify-between text-sm mb-1">
-              <span>Aderência</span>
-              <span className="font-medium">{adherenceData?.overall.adherencePercentage || 0}%</span>
-            </div>
-            <Progress 
-              value={adherenceData?.overall.adherencePercentage || 0} 
-              variant={getProgressVariant(adherenceData?.overall.adherencePercentage || 0)}
-              className="h-2"
-            />
-          </div>
-
-          <div className="text-xs text-muted-foreground">
-            {adherenceData?.overall.fulfilled || 0} de {adherenceData?.overall.total || 0} requisitos atendidos
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-interface CandidateDetailedCardProps {
-  candidate: Candidate;
-  matrixItems: MatrixItem[];
-  getInitials: (name: string) => string;
-  getProgressVariant: (percentage: number) => string;
-  getCompatibilityLevel: (percentage: number) => { level: string; color: string; icon: any };
-}
 
 interface DetailedComparisonTableProps {
   vacancyId: string;
@@ -268,7 +112,10 @@ interface DetailedComparisonTableProps {
 }
 
 const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTableProps) => {
-  const { comparisons, loading, error } = useVacancyCandidateComparison(vacancyId);
+  const { comparisons, loading, error, refetch } = useVacancyCandidateComparison(vacancyId);
+  const deleteCandidateDocument = useDeleteCandidateDocument();
+  const [deleteTarget, setDeleteTarget] = useState<{ candidateId: string; documentId: string } | null>(null);
+  const isDeleting = deleteCandidateDocument.isPending;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -298,15 +145,39 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
     }
   };
 
-  const getValidityBadge = (validity: string) => {
+  const getValidityBadge = (validity: string, validityDate?: string) => {
+    if (validityDate && validityDate !== 'null' && validityDate !== 'undefined') {
+      const date = new Date(validityDate);
+      const formattedDate = date.toLocaleDateString('pt-BR');
+      switch (validity) {
+        case 'Valido':
+          return <Badge className="bg-green-100 text-green-800">Válido até {formattedDate}</Badge>;
+        case 'Vencido':
+          return <Badge className="bg-red-100 text-red-800">Vencido em {formattedDate}</Badge>;
+        default:
+          return <Badge variant="outline">{formattedDate}</Badge>;
+      }
+    }
     switch (validity) {
       case 'Valido':
         return <Badge className="bg-green-100 text-green-800">Válido</Badge>;
       case 'Vencido':
         return <Badge className="bg-red-100 text-red-800">Vencido</Badge>;
       default:
-        return <Badge variant="outline">N/A</Badge>;
+        return null;
     }
+  };
+
+  const getEffectiveValidity = (doc: { validityStatus: string; validityDate?: string; candidateDocument?: { expiryDate: string } }) => {
+    const effectiveValidityDate = doc.validityDate || doc.candidateDocument?.expiryDate;
+    let displayStatus = doc.validityStatus;
+    if (doc.validityStatus === 'N/A' && effectiveValidityDate && effectiveValidityDate !== 'null' && effectiveValidityDate !== 'undefined') {
+      const expiry = new Date(effectiveValidityDate);
+      if (!isNaN(expiry.getTime())) {
+        displayStatus = expiry.getTime() >= new Date().setHours(0, 0, 0, 0) ? 'Valido' : 'Vencido';
+      }
+    }
+    return { displayStatus, effectiveValidityDate };
   };
 
   if (loading) {
@@ -348,9 +219,14 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
     );
   }
 
+  // Ordenar comparações por aderência (maior para menor)
+  const sortedComparisons = [...comparisons].sort((a, b) => {
+    return b.adherencePercentage - a.adherencePercentage; // Maior para menor
+  });
+
   return (
     <div className="space-y-4">
-      {comparisons.map((comparison) => (
+      {sortedComparisons.map((comparison) => (
         <Card key={comparison.candidateId}>
           <CardHeader>
             <div className="flex items-center justify-between">
@@ -394,12 +270,15 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                   <TableRow>
                     <TableHead>Status</TableHead>
                     <TableHead>Validade</TableHead>
+                    <TableHead>Categoria</TableHead>
+                    <TableHead>Sigla</TableHead>
                     <TableHead>Documento</TableHead>
                     <TableHead>Código</TableHead>
                     <TableHead>Obrigatoriedade</TableHead>
                     <TableHead>Horas</TableHead>
                     <TableHead>Modalidade</TableHead>
                     <TableHead>Observações</TableHead>
+                    <TableHead>Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -412,13 +291,33 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                         </div>
                       </TableCell>
                       <TableCell>
-                        {getValidityBadge(doc.validityStatus)}
+                        {(() => {
+                          const { displayStatus, effectiveValidityDate } = getEffectiveValidity(doc);
+                          return getValidityBadge(displayStatus, effectiveValidityDate);
+                        })()}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="text-xs">
+                          {doc.category || '-'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-sm font-mono">
+                          {doc.sigla || '-'}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">
-                          <div className="font-medium">{doc.documentName}</div>
+                          <div className="flex flex-col gap-1">
+                            <div className="font-medium">{doc.documentName}</div>
+                            {doc.documentNameEnglish && (
+                              <Badge variant="outline" className="w-fit text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                {doc.documentNameEnglish}
+                              </Badge>
+                            )}
+                          </div>
                           {doc.candidateDocument && (
-                            <div className="text-muted-foreground text-xs">
+                            <div className="text-muted-foreground text-xs mt-1">
                               Candidato: {doc.candidateDocument.name}
                             </div>
                           )}
@@ -464,6 +363,20 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
                           )}
                         </div>
                       </TableCell>
+                      <TableCell>
+                        {doc.candidateDocument && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteTarget({ candidateId: comparison.candidateId, documentId: doc.candidateDocument!.id })}
+                            title="Excluir documento comparado (remove da comparação e da base de dados)"
+                            className="text-destructive hover:text-destructive"
+                            disabled={isDeleting}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -472,6 +385,38 @@ const DetailedComparisonTable = ({ vacancyId, matrixId }: DetailedComparisonTabl
           </CardContent>
         </Card>
       ))}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir documento comparado</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este documento comparado? O documento e todos os vínculos serão removidos do banco de dados. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) {
+                  deleteCandidateDocument.mutate(
+                    { ...deleteTarget, vacancyId },
+                    {
+                      onSuccess: () => {
+                        setDeleteTarget(null);
+                      },
+                    }
+                  );
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Excluindo…" : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

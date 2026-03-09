@@ -7,7 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, Save, User } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Save, User, Key } from "lucide-react";
+import { logger } from "@/lib/logger";
 
 interface UserProfile {
   id: string;
@@ -23,11 +25,13 @@ const UserEditor = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { id } = useParams();
+  const queryClient = useQueryClient();
   const isEditing = !!id;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [justSaved, setJustSaved] = useState(false);
   
   const [formData, setFormData] = useState({
     name: "",
@@ -79,8 +83,8 @@ const UserEditor = () => {
             role: roleData?.role || "recrutador",
           });
         }
-      } catch (error) {
-        console.error('Erro ao carregar dados:', error);
+      } catch (error: any) {
+        logger.error('Erro ao carregar dados:', { error: error.message });
         toast({
           title: "Erro",
           description: "Não foi possível carregar os dados do usuário.",
@@ -91,8 +95,14 @@ const UserEditor = () => {
       }
     };
 
-    fetchData();
-  }, [id, isEditing, navigate, toast]);
+    // Não recarregar se acabamos de salvar
+    if (!justSaved) {
+      fetchData();
+    } else {
+      // Resetar a flag após um pequeno delay
+      setTimeout(() => setJustSaved(false), 100);
+    }
+  }, [id, isEditing, navigate, justSaved]);
 
   const handleSave = async () => {
     if (!formData.name.trim()) {
@@ -113,38 +123,122 @@ const UserEditor = () => {
       return;
     }
 
-    if (!isEditing && (!formData.password || formData.password.length < 6)) {
+    // Validação de senha
+    // Para novos usuários: senha é obrigatória
+    // Para edição: senha é opcional, mas se fornecida, deve ser válida
+    if (!isEditing && (!formData.password || formData.password.trim() === "")) {
       toast({
         title: "Erro",
-        description: "Senha deve ter pelo menos 6 caracteres.",
+        description: "Senha é obrigatória para novos usuários.",
         variant: "destructive",
       });
       return;
     }
 
-    if (!isEditing && formData.password !== formData.confirmPassword) {
-      toast({
-        title: "Erro",
-        description: "Senhas não coincidem.",
-        variant: "destructive",
-      });
-      return;
+    // Se senha foi fornecida (novo usuário ou edição), validar
+    if (formData.password && formData.password.trim() !== "") {
+      if (formData.password.length < 6) {
+        toast({
+          title: "Erro",
+          description: "Senha deve ter pelo menos 6 caracteres.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (formData.password !== formData.confirmPassword) {
+        toast({
+          title: "Erro",
+          description: "Senhas não coincidem.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     setSaving(true);
 
     try {
       if (isEditing && id) {
+        logger.debug('Salvando usuario:', { id });
+        
         // Update existing user
-        const { error: profileError } = await supabase
+        const { data: updateResult, error: profileError, count } = await supabase
           .from('profiles')
           .update({
             name: formData.name,
             email: formData.email,
+            updated_at: new Date().toISOString(),
           })
-          .eq('id', id);
+          .eq('id', id)
+          .select();
 
-        if (profileError) throw profileError;
+        if (profileError) {
+          logger.error('Erro ao salvar perfil:', { error: profileError.message });
+          throw profileError;
+        }
+
+        logger.debug('Update realizado com sucesso');
+        
+        // Verificar se realmente atualizou
+        if (updateResult && updateResult.length === 0) {
+          logger.warn('Update nao afetou nenhuma linha');
+          // Verificar se o usuário existe
+          const { data: checkUser } = await supabase
+            .from('profiles')
+            .select('id, name, email')
+            .eq('id', id)
+            .single();
+          logger.debug('Usuario verificado:', { found: !!checkUser });
+        }
+
+        logger.debug('Perfil salvo com sucesso');
+
+        // Marcar que acabamos de salvar para evitar recarregamento
+        setJustSaved(true);
+
+        // Atualizar o estado imediatamente com os dados do formulário
+        // Isso garante que a UI reflita as mudanças mesmo antes de buscar do banco
+        setUser(prev => prev ? {
+          ...prev,
+          name: formData.name,
+          email: formData.email,
+          updated_at: new Date().toISOString(),
+        } : null);
+
+        // IMPORTANTE: Não atualizar o formData aqui, ele já tem os valores corretos
+        // O formData deve manter os valores que o usuário digitou
+
+        // Tentar buscar os dados atualizados do banco para confirmar (sem atualizar formData)
+        try {
+          const { data: updatedData, error: fetchError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+          if (!fetchError && updatedData) {
+            logger.debug('Dados atualizados recuperados do banco');
+            // Atualizar apenas o estado do usuário, não o formData
+            setUser(updatedData);
+          } else {
+            logger.warn('Nao foi possivel buscar dados atualizados');
+          }
+        } catch (fetchError: any) {
+          logger.warn('Erro ao buscar dados atualizados:', { error: fetchError?.message });
+        }
+
+        // Se o email mudou, atualizar também no auth.users
+        if (user && formData.email !== user.email) {
+          try {
+            // Usar Edge Function ou admin API para atualizar email
+            // Por enquanto, vamos apenas atualizar o profile
+            // O email no auth.users pode precisar de confirmação
+            logger.debug('Email mudou, mas atualizacao no auth.users requer permissoes admin');
+          } catch (emailError: any) {
+            logger.warn('Nao foi possivel atualizar email no auth.users:', { error: emailError?.message });
+          }
+        }
 
         // Update role using a more robust approach
         try {
@@ -155,7 +249,7 @@ const UserEditor = () => {
             .eq('user_id', id);
 
           if (updateError) {
-            console.log('Update failed, trying upsert:', updateError.message);
+            logger.debug('Update failed, trying upsert');
             
             // If update fails, try upsert
             const { error: upsertError } = await supabase
@@ -168,7 +262,7 @@ const UserEditor = () => {
               });
 
             if (upsertError) {
-              console.warn('Upsert also failed:', upsertError.message);
+              logger.warn('Upsert also failed');
               // Try direct insert (in case no role exists)
               const { error: insertError } = await supabase
                 .from('user_roles')
@@ -178,19 +272,74 @@ const UserEditor = () => {
                 });
 
               if (insertError) {
-                console.warn('All role update methods failed:', insertError.message);
+                logger.warn('All role update methods failed');
                 // Don't throw error, profile was updated successfully
               }
             }
           }
-        } catch (roleError) {
-          console.warn('Role update failed completely:', roleError);
+        } catch (roleError: any) {
+          logger.warn('Role update failed completely:', { error: roleError?.message });
           // Don't throw error, profile was updated successfully
         }
 
+        // Atualizar senha se fornecida
+        let passwordUpdated = false;
+        if (formData.password && formData.password.trim() !== "") {
+          try {
+            logger.debug('Tentando atualizar senha para usuario');
+            
+            // Obter o token de autenticação atual
+            const { data: { session } } = await supabase.auth.getSession();
+            
+            if (!session) {
+              throw new Error('Usuário não autenticado');
+            }
+
+            // Chamar a Edge Function para atualizar senha
+            // SECURITY: Never log password data
+            const { data: passwordData, error: passwordError } = await supabase.functions.invoke(
+              'update-user-password',
+              {
+                body: {
+                  userId: id,
+                  newPassword: formData.password,
+                },
+              }
+            );
+
+            if (passwordError) {
+              logger.error('Erro ao atualizar senha');
+              toast({
+                title: "Aviso",
+                description: passwordError.message || "Perfil atualizado, mas a senha não foi alterada.",
+                variant: "default",
+              });
+            } else {
+              logger.debug('Senha atualizada com sucesso');
+              passwordUpdated = true;
+            }
+          } catch (passwordUpdateError: any) {
+            logger.error('Erro ao tentar atualizar senha:', { error: passwordUpdateError?.message });
+            const errorMessage = passwordUpdateError?.message || passwordUpdateError?.toString() || "Erro desconhecido";
+            toast({
+              title: "Aviso",
+              description: `Perfil atualizado, mas houve um erro ao alterar a senha: ${errorMessage}`,
+              variant: "default",
+            });
+          }
+        }
+
+        const successMessage = passwordUpdated 
+          ? "Usuário e senha atualizados com sucesso."
+          : "Usuário atualizado com sucesso.";
+
+        // Invalidar queries para atualizar a lista de usuários
+        queryClient.invalidateQueries({ queryKey: ["users"] });
+        queryClient.invalidateQueries({ queryKey: ["user", id] });
+
         toast({
           title: "Sucesso",
-          description: "Usuário atualizado com sucesso.",
+          description: successMessage,
         });
       } else {
         // Create new user using signup (for regular users)
@@ -236,11 +385,25 @@ const UserEditor = () => {
           return;
         }
       }
-    } catch (error) {
-      console.error('Erro ao salvar usuário:', error);
+    } catch (error: any) {
+      logger.error('Erro ao salvar usuario:', { error: error?.message });
+      
+      // Em caso de erro, manter o formData como está (não recarregar do banco)
+      setJustSaved(true);
+      
+      // Determinar mensagem de erro mais específica
+      let errorMessage = "Não foi possível salvar o usuário.";
+      if (error?.message?.includes('Failed to fetch') || error?.message?.includes('ERR_INTERNET_DISCONNECTED')) {
+        errorMessage = "Erro de conexão. Verifique sua internet e tente novamente.";
+      } else if (error?.code === 'PGRST116') {
+        errorMessage = "Usuário não encontrado ou sem permissão para atualizar.";
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         title: "Erro",
-        description: "Não foi possível salvar o usuário.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -335,39 +498,49 @@ const UserEditor = () => {
           </CardContent>
         </Card>
 
-        {/* Password Section - Only for new users */}
-        {!isEditing && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Senha de acesso</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="password">Senha *</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="Mínimo 6 caracteres"
-                  />
-                </div>
-                
-                <div>
-                  <Label htmlFor="confirmPassword">Confirmar senha *</Label>
-                  <Input
-                    id="confirmPassword"
-                    type="password"
-                    value={formData.confirmPassword}
-                    onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                    placeholder="Digite a senha novamente"
-                  />
-                </div>
+        {/* Password Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5" />
+              {isEditing ? "Alterar senha" : "Senha de acesso"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isEditing && (
+              <p className="text-sm text-muted-foreground">
+                Deixe em branco para manter a senha atual. Preencha apenas se desejar alterar.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="password">
+                  {isEditing ? "Nova senha" : "Senha *"}
+                </Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  placeholder={isEditing ? "Deixe em branco para manter" : "Mínimo 6 caracteres"}
+                />
               </div>
-            </CardContent>
-          </Card>
-        )}
+              
+              <div>
+                <Label htmlFor="confirmPassword">
+                  {isEditing ? "Confirmar nova senha" : "Confirmar senha *"}
+                </Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  value={formData.confirmPassword}
+                  onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                  placeholder="Digite a senha novamente"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* User Information */}
         {isEditing && user && (

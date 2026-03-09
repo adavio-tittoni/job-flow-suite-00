@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { ArrowLeft, Save, Users } from "lucide-react";
+import { ArrowLeft, Save, Users, CheckCircle, RotateCcw, Loader2 } from "lucide-react";
 import VacancyCandidatesSection from "@/components/VacancyCandidatesSection";
+import CloseVacancyDialog from "@/components/CloseVacancyDialog";
 
 interface Matrix {
   id: string;
@@ -80,6 +81,9 @@ const VacancyEditor = () => {
     location: "",
     notes: "",
   });
+
+  const [showCloseVacancyDialog, setShowCloseVacancyDialog] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   // Fetch initial data
   useEffect(() => {
@@ -257,6 +261,40 @@ const VacancyEditor = () => {
     }
   };
 
+  const handleReopenVacancy = async () => {
+    if (!id) return;
+
+    setReopening(true);
+    try {
+      const { error } = await supabase
+        .from('vacancies')
+        .update({
+          status: 'open',
+          closed_at: null,
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Atualizar o estado local da vaga
+      setVacancy(prev => prev ? { ...prev, status: 'open', closed_at: undefined } : null);
+
+      toast({
+        title: "Vaga reaberta",
+        description: "A vaga foi reaberta com sucesso.",
+      });
+    } catch (error) {
+      console.error('Erro ao reabrir vaga:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível reabrir a vaga.",
+        variant: "destructive",
+      });
+    } finally {
+      setReopening(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="container mx-auto px-4 py-8">
@@ -276,16 +314,57 @@ const VacancyEditor = () => {
         </Button>
         
         <div className="flex-1">
-          <h1 className="text-3xl font-bold text-foreground">
-            {isEditing ? 'Editar vaga' : 'Nova vaga'}
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-foreground">
+              {isEditing ? 'Editar vaga' : 'Nova vaga'}
+            </h1>
+            {vacancy?.status === 'closed' && (
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200">
+                Fechada
+              </span>
+            )}
+          </div>
           <p className="text-muted-foreground">
             {isEditing 
-              ? 'Altere as informações da vaga conforme necessário'
+              ? vacancy?.status === 'closed'
+                ? 'Esta vaga foi finalizada'
+                : 'Altere as informações da vaga conforme necessário'
               : 'Preencha as informações para criar uma nova vaga'
             }
           </p>
         </div>
+
+        {isEditing && vacancy?.status === 'open' && (
+          <Button 
+            variant="outline" 
+            onClick={() => setShowCloseVacancyDialog(true)}
+            className="text-orange-600 border-orange-300 hover:bg-orange-50 hover:text-orange-700"
+          >
+            <CheckCircle className="mr-2 h-4 w-4" />
+            Finalizar Vaga
+          </Button>
+        )}
+
+        {isEditing && vacancy?.status === 'closed' && (
+          <Button 
+            variant="outline" 
+            onClick={handleReopenVacancy}
+            disabled={reopening}
+            className="text-green-600 border-green-300 hover:bg-green-50 hover:text-green-700"
+          >
+            {reopening ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Reabrindo...
+              </>
+            ) : (
+              <>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Reabrir Vaga
+              </>
+            )}
+          </Button>
+        )}
 
         {activeTab === 'informacoes' && (
           <Button onClick={handleSave} disabled={saving}>
@@ -480,6 +559,20 @@ const VacancyEditor = () => {
         </TabsContent>
 
       </Tabs>
+
+      {/* Dialog para finalizar vaga */}
+      {isEditing && id && (
+        <CloseVacancyDialog
+          open={showCloseVacancyDialog}
+          onOpenChange={setShowCloseVacancyDialog}
+          vacancyId={id}
+          vacancyTitle={formData.title}
+          onSuccess={() => {
+            // Atualizar o estado local da vaga para refletir o fechamento
+            setVacancy(prev => prev ? { ...prev, status: 'closed', closed_at: new Date().toISOString() } : null);
+          }}
+        />
+      )}
     </div>
   );
 };

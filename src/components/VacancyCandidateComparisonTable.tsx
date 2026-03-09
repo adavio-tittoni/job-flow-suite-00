@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { AlertCircle, CheckCircle, Clock, Download, Eye, XCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, RefreshCw, Eye, XCircle } from 'lucide-react';
 import { useVacancyCandidateComparison } from '@/hooks/useVacancyCandidateComparison';
 import { cn } from '@/lib/utils';
 
@@ -45,7 +45,23 @@ export const VacancyCandidateComparisonTable = ({ vacancyId }: VacancyCandidateC
     }
   };
 
-  const getValidityBadge = (validity: string) => {
+  const getValidityBadge = (validity: string, validityDate?: string) => {
+    // Se temos data de validade, mostrar a data
+    if (validityDate && validityDate !== 'null' && validityDate !== 'undefined') {
+      const date = new Date(validityDate);
+      const formattedDate = date.toLocaleDateString('pt-BR');
+      
+      switch (validity) {
+        case 'Valido':
+          return <Badge className="bg-green-100 text-green-800">Válido até {formattedDate}</Badge>;
+        case 'Vencido':
+          return <Badge className="bg-red-100 text-red-800">Vencido em {formattedDate}</Badge>;
+        default:
+          return <Badge variant="outline">{formattedDate}</Badge>;
+      }
+    }
+    
+    // Fallback para quando não há data
     switch (validity) {
       case 'Valido':
         return <Badge className="bg-green-100 text-green-800">Válido</Badge>;
@@ -119,8 +135,8 @@ export const VacancyCandidateComparisonTable = ({ vacancyId }: VacancyCandidateC
               </p>
             </div>
             <Button variant="outline" onClick={refetch} disabled={loading}>
-              <Download className="h-4 w-4 mr-2" />
-              Exportar Comparação
+              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'Atualizando...' : 'Atualizar Comparação'}
             </Button>
           </div>
         </CardHeader>
@@ -235,7 +251,7 @@ export const VacancyCandidateComparisonTable = ({ vacancyId }: VacancyCandidateC
                           </div>
                         </TableCell>
                         <TableCell>
-                          {getValidityBadge(doc.validityStatus)}
+                          {getValidityBadge(doc.validityStatus, doc.validityDate)}
                         </TableCell>
                         <TableCell>
                           <div className="text-sm">

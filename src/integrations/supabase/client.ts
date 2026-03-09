@@ -1,9 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-// Use environment variables with fallback to default values
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://uuorwhhvjxafrqdyrrzt.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV1b3J3aGh2anhhZnJxZHlycnp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAwNjA4OTgsImV4cCI6MjA3NTYzNjg5OH0.UxNm138Qzyu6kC7fKj6e3_FSzQO4X4CsipdPGsLfupA";
+// SECURITY: Environment variables are required - no hardcoded fallbacks
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Validate required environment variables
+if (!SUPABASE_URL) {
+  throw new Error('VITE_SUPABASE_URL environment variable is required. Please check your .env file.');
+}
+
+if (!SUPABASE_PUBLISHABLE_KEY) {
+  throw new Error('VITE_SUPABASE_ANON_KEY environment variable is required. Please check your .env file.');
+}
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";

@@ -1,4 +1,4 @@
-import { LogOut, User, Settings, Users, HelpCircle, FileText } from "lucide-react";
+import { LogOut, User, Users, HelpCircle } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -48,20 +48,12 @@ export function UserMenu() {
           <User className="mr-2 h-4 w-4" />
           Meus dados
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => navigate("/settings")}>
-          <Settings className="mr-2 h-4 w-4" />
-          Ajustes
-        </DropdownMenuItem>
         {(user?.role === "administrador" || user?.role === "superadministrador") && (
           <DropdownMenuItem onClick={() => navigate("/users")}>
             <Users className="mr-2 h-4 w-4" />
             Usuários
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onClick={() => navigate("/logs")}>
-          <FileText className="mr-2 h-4 w-4" />
-          Logs
-        </DropdownMenuItem>
         <DropdownMenuItem onClick={() => navigate("/help")}>
           <HelpCircle className="mr-2 h-4 w-4" />
           Ajuda

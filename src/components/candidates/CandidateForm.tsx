@@ -12,15 +12,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useCandidates, type Candidate } from "@/hooks/useCandidates";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { validateCPF, validatePhone } from "@/lib/validators";
+import { formatCPF, formatPhone } from "@/lib/masks";
+import { logger } from "@/lib/logger";
 
 const candidateSchema = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
   email: z.string().email("Email inválido").optional().or(z.literal("")),
   phones: z.string().optional(),
-  cpf: z.string().optional(),
-  role_title: z.string().optional(),
+  cpf: z.string().optional().refine(
+    (value) => !value || value.replace(/\D/g, '').length === 0 || validateCPF(value),
+    { message: "CPF inválido. Verifique os dígitos." }
+  ),
   linkedin_url: z.string().optional(),
-  working_status: z.string().optional(),
   matrix_id: z.string().optional().or(z.undefined()),
   blacklisted: z.boolean().default(false),
   address_street: z.string().optional(),
@@ -47,6 +51,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedVacancyId, setSelectedVacancyId] = useState<string | undefined>(undefined);
 
   // Fetch vacancies for selection
   const { data: vacancies = [] } = useQuery({
@@ -75,9 +80,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
       email: candidate?.email || "",
       phones: candidate?.phones || "",
       cpf: candidate?.cpf || "",
-      role_title: candidate?.role_title || "",
       linkedin_url: candidate?.linkedin_url || "",
-      working_status: candidate?.working_status || "",
       matrix_id: candidate?.matrix_id || undefined,
       blacklisted: candidate?.blacklisted || false,
       address_street: candidate?.address_street || "",
@@ -99,10 +102,55 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
     return `https://linkedin.com/in/${url}`;
   };
 
+  // Handle CPF input with formatting
+  const handleCPFChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.replace(/\D/g, '');
+    if (value.length > 11) value = value.slice(0, 11);
+    
+    // Format as CPF
+    if (value.length > 9) {
+      value = `${value.slice(0, 3)}.${value.slice(3, 6)}.${value.slice(6, 9)}-${value.slice(9)}`;
+    } else if (value.length > 6) {
+      value = `${value.slice(0, 3)}.${value.slice(3, 6)}.${value.slice(6)}`;
+    } else if (value.length > 3) {
+      value = `${value.slice(0, 3)}.${value.slice(3)}`;
+    }
+    
+    setValue("cpf", value);
+  };
+
+  // Handle phone input with formatting
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.replace(/\D/g, '');
+    if (value.length > 11) value = value.slice(0, 11);
+    
+    // Format as phone
+    if (value.length > 10) {
+      value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`;
+    } else if (value.length > 6) {
+      value = `(${value.slice(0, 2)}) ${value.slice(2, 6)}-${value.slice(6)}`;
+    } else if (value.length > 2) {
+      value = `(${value.slice(0, 2)}) ${value.slice(2)}`;
+    }
+    
+    setValue("phones", value);
+  };
+
   const onSubmit = async (data: CandidateFormData) => {
     setIsSubmitting(true);
     try {
-      console.log('📝 CandidateForm: Submitting data:', data);
+      // Validação: ao criar novo candidato, é obrigatório selecionar uma vaga
+      if (!candidate && !selectedVacancyId) {
+        toast({
+          title: "Vaga obrigatória",
+          description: "É necessário selecionar uma vaga para criar o candidato.",
+          variant: "destructive",
+        });
+        setIsSubmitting(false);
+        return;
+      }
+
+      logger.debug('CandidateForm: Submitting data');
       
       const normalizedData = {
         ...data,
@@ -110,11 +158,9 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
         email: data.email || "", // Keep as empty string instead of null
         matrix_id: data.matrix_id || null,
       };
-      
-      console.log('📝 CandidateForm: Normalized data:', normalizedData);
 
       if (candidate) {
-        console.log('📝 CandidateForm: Updating candidate:', candidate.id);
+        logger.debug('CandidateForm: Updating candidate');
         await updateCandidate.mutateAsync({ id: candidate.id, ...normalizedData });
         
         // Invalidate queries related to matrix comparison
@@ -125,12 +171,33 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
         queryClient.invalidateQueries({ queryKey: ["enhanced-matrix-comparison", candidate.id] });
         queryClient.invalidateQueries({ queryKey: ["vacancy-candidate-comparison"] });
       } else {
-        console.log('📝 CandidateForm: Creating new candidate');
-        await createCandidate.mutateAsync(normalizedData);
+        logger.debug('CandidateForm: Creating new candidate');
+        const newCandidate = await createCandidate.mutateAsync(normalizedData);
+        
+        // Após criar o candidato, vincular à vaga selecionada
+        if (selectedVacancyId && newCandidate?.id) {
+          const { error: linkError } = await supabase
+            .from('vacancy_candidates')
+            .insert({
+              vacancy_id: selectedVacancyId,
+              candidate_id: newCandidate.id,
+            });
+          
+          if (linkError) {
+            logger.error('Erro ao vincular candidato a vaga:', { error: linkError.message });
+            toast({
+              title: "Aviso",
+              description: "Candidato criado, mas houve erro ao vincular à vaga. Você pode vincular manualmente depois.",
+              variant: "destructive",
+            });
+          } else {
+            logger.debug('Candidato vinculado a vaga com sucesso');
+          }
+        }
       }
       onSuccess();
-    } catch (error) {
-      console.error('📝 CandidateForm: Error submitting:', error);
+    } catch (error: any) {
+      logger.error('CandidateForm: Error submitting:', { error: error?.message });
       toast({
         title: "Erro",
         description: "Não foi possível salvar o candidato.",
@@ -147,7 +214,7 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="name">Nome *</Label>
+          <Label htmlFor="name">Nome Completo (conforme o documento) *</Label>
           <Input
             id="name"
             {...register("name")}
@@ -155,6 +222,48 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
           />
           {errors.name && (
             <p className="text-sm text-destructive">{errors.name.message}</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="matrix_id">
+            Vaga a ser concorrida {!candidate && <span className="text-destructive">*</span>}
+          </Label>
+          <Select 
+            value={(() => {
+              if (candidate) {
+                // Find the vacancy that has the same matrix_id as the candidate
+                const currentVacancy = vacancies.find(v => v.matrix_id === candidate?.matrix_id);
+                return currentVacancy?.id || undefined;
+              }
+              return selectedVacancyId || undefined;
+            })()} 
+            onValueChange={(value) => {
+              logger.debug('CandidateForm: Vacancy selected');
+              setSelectedVacancyId(value);
+              // Find the vacancy and get its matrix_id
+              const selectedVacancy = vacancies.find(v => v.id === value);
+              if (selectedVacancy) {
+                setValue("matrix_id", selectedVacancy.matrix_id || undefined);
+              } else {
+                setValue("matrix_id", undefined);
+                setSelectedVacancyId(undefined);
+              }
+            }}
+          >
+            <SelectTrigger className={!candidate && !selectedVacancyId ? "border-destructive" : ""}>
+              <SelectValue placeholder="Selecione uma vaga..." />
+            </SelectTrigger>
+            <SelectContent>
+              {vacancies.map((vacancy) => (
+                <SelectItem key={vacancy.id} value={vacancy.id}>
+                  {vacancy.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!candidate && !selectedVacancyId && (
+            <p className="text-sm text-destructive">É obrigatório selecionar uma vaga para criar o candidato.</p>
           )}
         </div>
 
@@ -175,8 +284,10 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
           <Label htmlFor="phones">Telefone</Label>
           <Input
             id="phones"
-            {...register("phones")}
+            value={watch("phones") || ""}
+            onChange={handlePhoneChange}
             placeholder="(11) 99999-9999"
+            maxLength={16}
           />
         </div>
 
@@ -184,18 +295,14 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
           <Label htmlFor="cpf">CPF</Label>
           <Input
             id="cpf"
-            {...register("cpf")}
+            value={watch("cpf") || ""}
+            onChange={handleCPFChange}
             placeholder="000.000.000-00"
+            maxLength={14}
           />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="role_title">Cargo Desejado</Label>
-          <Input
-            id="role_title"
-            {...register("role_title")}
-            placeholder="Cargo pretendido"
-          />
+          {errors.cpf && (
+            <p className="text-sm text-destructive">{errors.cpf.message}</p>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -205,58 +312,6 @@ export const CandidateForm = ({ candidate, onSuccess, onCancel, compact = false 
             {...register("linkedin_url")}
             placeholder="linkedin.com/in/usuario"
           />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="working_status">Status de Trabalho</Label>
-          <Select onValueChange={(value) => setValue("working_status", value)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Selecione o status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="Trabalhando">Trabalhando</SelectItem>
-              <SelectItem value="Disponível">Disponível</SelectItem>
-              <SelectItem value="Não disponível">Não disponível</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="matrix_id">Vaga a ser concorrida</Label>
-          <Select 
-            value={(() => {
-              // Find the vacancy that has the same matrix_id as the candidate
-              const currentVacancy = vacancies.find(v => v.matrix_id === candidate?.matrix_id);
-              console.log('📝 CandidateForm: Current candidate matrix_id:', candidate?.matrix_id);
-              console.log('📝 CandidateForm: Available vacancies:', vacancies);
-              console.log('📝 CandidateForm: Found vacancy:', currentVacancy);
-              return currentVacancy?.id || undefined;
-            })()} 
-            onValueChange={(value) => {
-              console.log('📝 CandidateForm: Vacancy selected:', value);
-              // Find the vacancy and get its matrix_id
-              const selectedVacancy = vacancies.find(v => v.id === value);
-              console.log('📝 CandidateForm: Selected vacancy:', selectedVacancy);
-              if (selectedVacancy) {
-                console.log('📝 CandidateForm: Setting matrix_id to:', selectedVacancy.matrix_id);
-                setValue("matrix_id", selectedVacancy.matrix_id || undefined);
-              } else {
-                console.log('📝 CandidateForm: No vacancy found, setting matrix_id to undefined');
-                setValue("matrix_id", undefined);
-              }
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Selecione uma vaga..." />
-            </SelectTrigger>
-            <SelectContent>
-              {vacancies.map((vacancy) => (
-                <SelectItem key={vacancy.id} value={vacancy.id}>
-                  {vacancy.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </div>
 

@@ -8,6 +8,7 @@ export interface Matrix {
   solicitado_por: string;
   versao_matriz: string;
   user_email: string;
+  active?: boolean;
   created_by?: string;
   created_at: string;
 }
@@ -127,17 +128,33 @@ export function useMatrixItems(matrixId: string) {
   return useQuery({
     queryKey: ["matrix-items", matrixId],
     queryFn: async () => {
+      // Buscar itens da matriz com campos básicos do catálogo
+      // Usar apenas campos que sabemos que existem no types.ts
       const { data, error } = await supabase
         .from("matrix_items")
         .select(`
           *,
-          document:documents_catalog(id, name, categoria, document_type)
+          documents_catalog(id, name, categoria, document_type, sigla_documento, codigo, nome_curso, sigla, group_name, modality)
         `)
         .eq("matrix_id", matrixId)
         .order("created_at");
 
-      if (error) throw error;
-      return data as MatrixItem[];
+      if (error) {
+        console.error("Erro ao buscar itens da matriz:", error);
+        throw error;
+      }
+      
+      // Transformar os dados para manter compatibilidade
+      const transformedData = data?.map(item => ({
+        ...item,
+        document: item.documents_catalog ? {
+          ...item.documents_catalog,
+          // Mapear modality para modalidade para compatibilidade
+          modalidade: item.documents_catalog.modality || null,
+        } : null
+      })) || [];
+      
+      return transformedData as MatrixItem[];
     },
     enabled: !!matrixId,
   });
@@ -147,10 +164,13 @@ export function useCreateMatrixItem() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (item: Omit<MatrixItem, "id" | "created_at">) => {
+    mutationFn: async (item: Omit<MatrixItem, "id" | "created_at" | "document">) => {
+      // Remover 'document' se existir, pois é apenas uma relação virtual
+      const { document, ...itemToInsert } = item as any;
+      
       const { error } = await supabase
         .from("matrix_items")
-        .insert(item);
+        .insert(itemToInsert);
 
       if (error) throw error;
     },

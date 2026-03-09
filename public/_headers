@@ -1,0 +1,22 @@
+# Cache de assets estáticos por 1 ano (imutável por ter hash)
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Cache de chunks JS por 1 ano (imutável por ter hash)
+/js/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# HTML deve sempre revalidar
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Segurança headers
+/*
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-XSS-Protection: 1; mode=block
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

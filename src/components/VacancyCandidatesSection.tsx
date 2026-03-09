@@ -8,12 +8,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Plus, X, User, CheckIcon, Loader2 } from "lucide-react";
+import { Plus, X, User, CheckIcon, Loader2, Download, CheckCircle2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { useCandidateRequirementStatus } from "@/hooks/useCandidateRequirementStatus";
+import { useVacancyCandidateComparison } from "@/hooks/useVacancyCandidateComparison";
 import { useAuth } from "@/hooks/useAuth";
 import CandidateMatrixComparison from "./CandidateMatrixComparison";
+import * as XLSX from "xlsx";
 
 interface VacancyCandidate {
   id: string;
@@ -49,9 +50,25 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
   const [loading, setLoading] = useState(true);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [candidateToRemove, setCandidateToRemove] = useState<VacancyCandidate | null>(null);
+  const [vacancyTitle, setVacancyTitle] = useState<string>("");
+  
+  // Buscar comparações para ordenar os cards
+  const { comparisons, loading: comparisonsLoading } = useVacancyCandidateComparison(vacancyId);
 
   const fetchVacancyCandidates = async () => {
     try {
+      // Buscar título da vaga
+      const { data: vacancyData, error: vacancyError } = await supabase
+        .from('vacancies')
+        .select('title')
+        .eq('id', vacancyId)
+        .single();
+
+      if (vacancyError) throw vacancyError;
+      if (vacancyData) {
+        setVacancyTitle(vacancyData.title || "");
+      }
+
       const { data, error } = await supabase
         .from('vacancy_candidates')
         .select(`
@@ -213,6 +230,87 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
     return notes.length > 100 ? notes.substring(0, 100) + "..." : notes;
   };
 
+  const exportToExcel = () => {
+    try {
+      if (vacancyCandidates.length === 0) {
+        toast({
+          title: "Aviso",
+          description: "Não há candidatos para exportar.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Criar workbook
+      const workbook = XLSX.utils.book_new();
+
+      // Preparar dados para exportação - Resumo simples: uma linha por candidato
+      const exportData: any[] = [];
+
+      // Se houver comparações, usar os dados das comparações
+      if (comparisons.length > 0) {
+        comparisons.forEach((comparison) => {
+          exportData.push({
+            "Nome da Vaga": vacancyTitle,
+            "Nome do Candidato": comparison.candidateName,
+            "Aderência (%)": comparison.adherencePercentage,
+            "Confere": comparison.metRequirements,
+            "Parcial": comparison.partialRequirements,
+            "Pendente": comparison.pendingRequirements,
+          });
+        });
+      } else {
+        // Se não houver comparações, exportar apenas dados básicos dos candidatos
+        vacancyCandidates.forEach((vacancyCandidate) => {
+          exportData.push({
+            "Nome da Vaga": vacancyTitle,
+            "Nome do Candidato": vacancyCandidate.candidate.name,
+            "Aderência (%)": "-",
+            "Confere": "-",
+            "Parcial": "-",
+            "Pendente": "-",
+          });
+        });
+      }
+
+      // Criar worksheet
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+
+      // Ajustar largura das colunas
+      const columnWidths = [
+        { wch: 30 }, // Nome da Vaga
+        { wch: 35 }, // Nome do Candidato
+        { wch: 15 }, // Aderência
+        { wch: 12 }, // Confere
+        { wch: 12 }, // Parcial
+        { wch: 12 }, // Pendente
+      ];
+      worksheet['!cols'] = columnWidths;
+
+      // Adicionar worksheet ao workbook
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Candidatos");
+
+      // Gerar nome do arquivo com data
+      const date = new Date().toISOString().split('T')[0];
+      const fileName = `Candidatos_${vacancyTitle.replace(/[^a-z0-9]/gi, '_')}_${date}.xlsx`;
+
+      // Salvar arquivo
+      XLSX.writeFile(workbook, fileName);
+
+      toast({
+        title: "Sucesso",
+        description: "Dados exportados para Excel com sucesso!",
+      });
+    } catch (error) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível exportar os dados para Excel.",
+        variant: "destructive",
+      });
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -235,13 +333,34 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
           )}
         </div>
 
-        <Popover open={showAddCandidate} onOpenChange={setShowAddCandidate}>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm">
-              <Plus className="mr-2 h-4 w-4" />
-              Adicionar candidato
+        <div className="flex items-center gap-2">
+          {vacancyCandidates.length > 0 && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={exportToExcel}
+              disabled={comparisonsLoading}
+            >
+              {comparisonsLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Carregando...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Exportar Excel
+                </>
+              )}
             </Button>
-          </PopoverTrigger>
+          )}
+          <Popover open={showAddCandidate} onOpenChange={setShowAddCandidate}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Adicionar candidato
+              </Button>
+            </PopoverTrigger>
           <PopoverContent className="w-80 p-0">
             <Command>
               <CommandInput placeholder="Buscar candidatos..." />
@@ -274,6 +393,7 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
             </Command>
           </PopoverContent>
         </Popover>
+        </div>
       </div>
 
       {vacancyCandidates.length === 0 ? (
@@ -287,15 +407,29 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {vacancyCandidates.map((vacancyCandidate) => (
-              <CandidateCard
-                key={vacancyCandidate.id}
-                vacancyCandidate={vacancyCandidate}
-                matrixId={matrixId}
-                onRemove={() => setCandidateToRemove(vacancyCandidate)}
-                onViewCandidate={() => navigate(`/candidates/${vacancyCandidate.candidate_id}?from=vacancy&vacancyId=${vacancyId}`)}
-              />
-            ))}
+            {(() => {
+              // Ordenar candidatos por aderência (maior para menor)
+              const sortedCandidates = [...vacancyCandidates].sort((a, b) => {
+                const comparisonA = comparisons.find(comp => comp.candidateId === a.candidate_id);
+                const comparisonB = comparisons.find(comp => comp.candidateId === b.candidate_id);
+                
+                const adherenceA = comparisonA?.adherencePercentage || 0;
+                const adherenceB = comparisonB?.adherencePercentage || 0;
+                
+                return adherenceB - adherenceA; // Maior para menor
+              });
+              
+              return sortedCandidates.map((vacancyCandidate) => (
+                <CandidateCard
+                  key={vacancyCandidate.id}
+                  vacancyCandidate={vacancyCandidate}
+                  matrixId={matrixId}
+                  vacancyId={vacancyId}
+                  onRemove={() => setCandidateToRemove(vacancyCandidate)}
+                  onViewCandidate={() => navigate(`/candidates/${vacancyCandidate.candidate_id}?from=vacancy&vacancyId=${vacancyId}`)}
+                />
+              ));
+            })()}
           </div>
 
           {/* Comparação com Matriz */}
@@ -330,15 +464,52 @@ const VacancyCandidatesSection = ({ vacancyId, matrixId }: VacancyCandidatesSect
 interface CandidateCardProps {
   vacancyCandidate: VacancyCandidate;
   matrixId: string | null;
+  vacancyId: string;
   onRemove: () => void;
   onViewCandidate: () => void;
 }
 
-const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }: CandidateCardProps) => {
+const CandidateCard = ({ vacancyCandidate, matrixId, vacancyId, onRemove, onViewCandidate }: CandidateCardProps) => {
   const { candidate } = vacancyCandidate;
+  const [approvalStatus, setApprovalStatus] = useState<boolean | null>(null);
+  const [loadingApproval, setLoadingApproval] = useState(true);
   
-  // Use the unified hook for consistency with detail view
-  const { data: adherenceData, isLoading: isAdherenceLoading } = useCandidateRequirementStatus(candidate.id);
+  // Usar useVacancyCandidateComparison para ter os mesmos dados da visão geral e detalhada
+  const { comparisons, loading: isAdherenceLoading } = useVacancyCandidateComparison(vacancyId);
+  
+  // Buscar os dados deste candidato específico nas comparações
+  const candidateComparison = comparisons.find(comp => comp.candidateId === candidate.id);
+
+  // Buscar status de aprovação do candidato para esta vaga
+  useEffect(() => {
+    const fetchApprovalStatus = async () => {
+      try {
+        setLoadingApproval(true);
+        const { data, error } = await supabase
+          .from('candidate_history')
+          .select('approved')
+          .eq('candidate_id', candidate.id)
+          .eq('vacancy_id', vacancyId)
+          .not('approved', 'is', null)
+          .order('event_date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        setApprovalStatus(data?.approved ?? null);
+      } catch (error) {
+        console.error('Erro ao buscar status de aprovação:', error);
+        setApprovalStatus(null);
+      } finally {
+        setLoadingApproval(false);
+      }
+    };
+
+    fetchApprovalStatus();
+  }, [candidate.id, vacancyId]);
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -359,7 +530,7 @@ const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }
     <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={onViewCandidate}>
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
             <Avatar className="h-10 w-10">
               <AvatarImage src={candidate.photo_url} />
               <AvatarFallback>
@@ -373,17 +544,38 @@ const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }
               )}
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove();
-            }}
-            className="h-8 w-8 p-0 hover:bg-destructive hover:text-destructive-foreground"
-          >
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Badge de status de aprovação */}
+            {!loadingApproval && approvalStatus !== null && (
+              <Badge 
+                variant={approvalStatus ? "default" : "destructive"}
+                className="flex items-center gap-1"
+              >
+                {approvalStatus ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3" />
+                    Aprovado
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="h-3 w-3" />
+                    Não aprovado
+                  </>
+                )}
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+              className="h-8 w-8 p-0 hover:bg-destructive hover:text-destructive-foreground"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -397,60 +589,63 @@ const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }
               <Loader2 className="h-4 w-4 animate-spin" />
               <span className="text-xs text-muted-foreground">Calculando aderência...</span>
             </div>
-          ) : adherenceData?.obligations && adherenceData.obligations.length > 0 ? (
+          ) : candidateComparison ? (
             <div>
               {/* Seção destacada com fundo azul escuro - aderência geral */}
               <div className="bg-primary text-primary-foreground p-3 rounded-lg mb-3">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-sm font-medium">Aderência:</p>
                   <span className="text-sm font-bold">
-                    {adherenceData.overall.adherencePercentage}%
+                    {candidateComparison.adherencePercentage}%
                   </span>
                 </div>
                 <Progress 
-                  value={adherenceData.overall.adherencePercentage} 
-                  variant={getProgressVariant(adherenceData.overall.adherencePercentage)}
+                  value={candidateComparison.adherencePercentage} 
+                  variant={getProgressVariant(candidateComparison.adherencePercentage)}
                   className="h-2 bg-primary-hover"
                 />
                 <div className="text-xs mt-1 opacity-90">
-                  <span className="font-medium">{adherenceData.overall.fulfilled} atendidos</span>
+                  <span className="font-medium">{candidateComparison.metRequirements} atendidos</span>
                 </div>
               </div>
               <div className="space-y-2">
                 
-                {adherenceData.obligations
-                  .filter(obligation => obligation.total > 0)
-                  .map((obligation) => (
-                    <div key={`${obligation.type}-${obligation.label}`} className="space-y-1">
+                {(() => {
+                  const mandatoryDocs = candidateComparison.documents.filter(doc => doc.obligation === 'Obrigatório');
+                  const mandatoryMet = mandatoryDocs.filter(doc => doc.status === 'Confere').length;
+                  const mandatoryPartial = mandatoryDocs.filter(doc => doc.status === 'Parcial').length;
+                  const mandatoryTotal = mandatoryDocs.length;
+                  const mandatoryPercentage = mandatoryTotal > 0 
+                    ? Math.round(((mandatoryMet) + (mandatoryPartial * 0.5)) / mandatoryTotal * 100)
+                    : 0;
+                  
+                  if (mandatoryTotal === 0) return null;
+                  
+                  return (
+                    <div className="space-y-1">
                       <div className="flex justify-between items-center text-xs">
-                        <span className="font-medium text-foreground truncate">{obligation.label}</span>
-                        <span className="text-muted-foreground ml-2">{obligation.adherencePercentage}%</span>
+                        <span className="font-medium text-foreground truncate">Mandatório</span>
+                        <span className="text-muted-foreground ml-2">{mandatoryPercentage}%</span>
                       </div>
                       <div className="space-y-1">
                         <Progress 
-                          value={obligation.adherencePercentage} 
-                          variant={getProgressVariant(obligation.adherencePercentage)}
+                          value={mandatoryPercentage} 
+                          variant={getProgressVariant(mandatoryPercentage)}
                           className="h-1.5"
                         />
                         <div className="text-xs text-muted-foreground">
-                          {obligation.fulfilled} de {obligation.total} requisitos
+                          {mandatoryMet} de {mandatoryTotal} requisitos
                         </div>
                       </div>
                     </div>
-                  ))
-                }
+                  );
+                })()}
               </div>
-              {adherenceData.nonRequiredDocuments && adherenceData.nonRequiredDocuments.length > 0 && (
-                <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                  <span>N/A. DOCS:</span>
-                  <span>{adherenceData.nonRequiredDocuments.length}</span>
-                </div>
-              )}
             </div>
           ) : (
             <div className="text-center py-2">
               <p className="text-xs text-muted-foreground">
-                Candidato sem matriz atribuída
+                {!matrixId ? 'Vincule uma matriz à vaga para ver aderência' : 'Dados não disponíveis'}
               </p>
             </div>
           )}
@@ -461,3 +656,5 @@ const CandidateCard = ({ vacancyCandidate, matrixId, onRemove, onViewCandidate }
 };
 
 export default VacancyCandidatesSection;
+
+

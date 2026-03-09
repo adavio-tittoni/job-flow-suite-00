@@ -5,12 +5,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useDocumentsCatalog, useDeleteDocument, DocumentCatalog } from "@/hooks/useDocuments";
 import { DocumentForm } from "@/components/DocumentForm";
 import { ImportResultsDialog } from "@/components/ImportResultsDialog";
 import { CSVInstructionsDialog } from "@/components/CSVInstructionsDialog";
 import { useDocumentImportExport, ImportResult } from "@/hooks/useDocumentImportExport";
-import { Plus, Search, Edit, Trash2, Download, Upload, FileText } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Download, Upload, FileText, Trash, Sheet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Documents() {
@@ -20,12 +21,14 @@ export default function Documents() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [showImportResults, setShowImportResults] = useState(false);
+  const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const { data: documents = [], isLoading } = useDocumentsCatalog();
+  const { data: documents = [], isLoading, refetch } = useDocumentsCatalog();
   const deleteDocument = useDeleteDocument();
   const { toast } = useToast();
-  const { exportTemplate, exportDocuments, importDocuments, isImporting, isExporting } = useDocumentImportExport();
+  const { exportTemplate, exportDocuments, exportDocumentsExcel, importDocuments, isImporting, isExporting } = useDocumentImportExport();
 
   // Filtrar documentos
   const filteredDocuments = documents.filter(doc => {
@@ -55,15 +58,60 @@ export default function Documents() {
     try {
       await deleteDocument.mutateAsync(id);
       toast({
-        title: "Documento excluído com sucesso!",
+        title: "Documento excluído",
+        description: "O documento foi excluído com sucesso.",
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Erro ao excluir documento:", error);
+      const errorMessage = error?.message || error?.error?.message || "Ocorreu um erro ao excluir o documento.";
       toast({
-        title: "Erro ao excluir documento",
-        description: "Tente novamente.",
+        title: "Erro",
+        description: errorMessage,
         variant: "destructive",
       });
     }
+  };
+
+  const handleDeleteAll = async () => {
+    try {
+      const deletePromises = selectedDocuments.map(id => deleteDocument.mutateAsync(id));
+      await Promise.all(deletePromises);
+      
+      toast({
+        title: "Documentos excluídos",
+        description: `${selectedDocuments.length} documentos foram excluídos com sucesso.`,
+      });
+      
+      setSelectedDocuments([]);
+      setShowDeleteAllDialog(false);
+      
+      // Forçar refetch dos dados para garantir atualização da UI
+      await refetch();
+    } catch (error: any) {
+      console.error("Erro ao excluir documentos:", error);
+      const errorMessage = error?.message || error?.error?.message || "Ocorreu um erro ao excluir os documentos.";
+      toast({
+        title: "Erro",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectedDocuments.length === filteredDocuments.length) {
+      setSelectedDocuments([]);
+    } else {
+      setSelectedDocuments(filteredDocuments.map(doc => doc.id));
+    }
+  };
+
+  const handleSelectDocument = (documentId: string) => {
+    setSelectedDocuments(prev => 
+      prev.includes(documentId) 
+        ? prev.filter(id => id !== documentId)
+        : [...prev, documentId]
+    );
   };
 
   const handleCloseForm = () => {
@@ -71,55 +119,55 @@ export default function Documents() {
     setSelectedDocument(undefined);
   };
 
-  const handleExportCSV = () => {
-    exportDocuments(filteredDocuments);
+  const handleExportCSV = async () => {
+    try {
+      await exportDocuments(filteredDocuments);
+    } catch (error) {
+      toast({
+        title: "Erro na exportação",
+        description: "Ocorreu um erro ao exportar os documentos.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleExportTemplate = () => {
-    exportTemplate();
+  const handleExportExcel = async () => {
+    try {
+      await exportDocumentsExcel(filteredDocuments);
+    } catch (error) {
+      toast({
+        title: "Erro na exportação",
+        description: "Ocorreu um erro ao exportar os documentos.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleImportCSV = () => {
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      toast({
-        title: "Arquivo inválido",
-        description: "Por favor, selecione um arquivo CSV.",
-        variant: "destructive",
-      });
-      return;
-    }
 
     try {
       const result = await importDocuments(file);
       setImportResult(result);
       setShowImportResults(true);
     } catch (error) {
-      console.error('Erro ao importar:', error);
-    }
-
-    // Limpar o input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      toast({
+        title: "Erro na importação",
+        description: "Ocorreu um erro ao importar os documentos.",
+        variant: "destructive",
+      });
     }
   };
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Documentos</h1>
-          <p className="text-muted-foreground">Catálogo de documentos do sistema</p>
-        </div>
-        <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Carregando...</div>
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">Carregando documentos...</p>
       </div>
     );
   }
@@ -142,9 +190,13 @@ export default function Documents() {
             <Download className="h-4 w-4 mr-2" />
             {isExporting ? 'Exportando...' : 'Exportar CSV'}
           </Button>
+          <Button variant="outline" onClick={handleExportExcel} disabled={isExporting}>
+            <Sheet className="h-4 w-4 mr-2" />
+            {isExporting ? 'Exportando...' : 'Exportar Excel'}
+          </Button>
           <Button variant="outline" onClick={handleImportCSV} disabled={isImporting}>
             <Upload className="h-4 w-4 mr-2" />
-            {isImporting ? 'Importando...' : 'Importar CSV'}
+            {isImporting ? 'Importando...' : 'Importar Excel/CSV'}
           </Button>
           <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
             <DialogTrigger asChild>
@@ -153,7 +205,7 @@ export default function Documents() {
                 Novo Documento
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-[95vw] max-h-[95vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {selectedDocument ? "Editar Documento" : "Novo Documento"}
@@ -190,11 +242,45 @@ export default function Documents() {
         </select>
       </div>
 
+      {/* Barra de ações para documentos selecionados */}
+      {selectedDocuments.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-blue-800 font-medium">
+              {selectedDocuments.length} documento{selectedDocuments.length > 1 ? 's' : ''} selecionado{selectedDocuments.length > 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSelectedDocuments([])}
+            >
+              Cancelar seleção
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setShowDeleteAllDialog(true)}
+            >
+              <Trash className="h-4 w-4 mr-2" />
+              Excluir selecionados
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Tabela */}
       <div className="border rounded-lg">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-12">
+                <Checkbox
+                  checked={selectedDocuments.length === filteredDocuments.length && filteredDocuments.length > 0}
+                  onCheckedChange={handleSelectAll}
+                />
+              </TableHead>
               <TableHead>Categoria</TableHead>
               <TableHead>Código</TableHead>
               <TableHead>Sigla</TableHead>
@@ -208,7 +294,7 @@ export default function Documents() {
           <TableBody>
             {filteredDocuments.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                   {searchTerm || categoryFilter ? "Nenhum documento encontrado" : "Nenhum documento cadastrado"}
                 </TableCell>
               </TableRow>
@@ -216,11 +302,35 @@ export default function Documents() {
               filteredDocuments.map((document) => (
                 <TableRow key={document.id}>
                   <TableCell>
+                    <Checkbox
+                      checked={selectedDocuments.includes(document.id)}
+                      onCheckedChange={() => handleSelectDocument(document.id)}
+                    />
+                  </TableCell>
+                  <TableCell>
                     <Badge variant="secondary">{document.categoria || document.group_name || "-"}</Badge>
                   </TableCell>
                   <TableCell>{document.codigo || "-"}</TableCell>
-                  <TableCell>{document.sigla || document.sigla_documento || "-"}</TableCell>
-                  <TableCell className="font-medium">{document.nome_curso || document.name || "-"}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <span>{document.sigla || document.sigla_documento || "-"}</span>
+                      {document.sigla_ingles && (
+                        <Badge variant="outline" className="w-fit text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          {document.sigla_ingles}
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex flex-col gap-1">
+                      <span>{document.nome_curso || document.name || "-"}</span>
+                      {document.nome_ingles && (
+                        <Badge variant="outline" className="w-fit text-xs bg-blue-50 text-blue-700 border-blue-200">
+                          {document.nome_ingles}
+                        </Badge>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>{document.carga_horaria || "-"}</TableCell>
                   <TableCell>{document.validade || "-"}</TableCell>
                   <TableCell>{document.modalidade || "-"}</TableCell>
@@ -267,27 +377,42 @@ export default function Documents() {
         </Table>
       </div>
 
-      {/* Contador de resultados */}
-      <div className="text-sm text-muted-foreground">
-        {filteredDocuments.length} documento(s) encontrado(s)
-        {searchTerm && ` para "${searchTerm}"`}
-        {categoryFilter && ` na categoria "${categoryFilter}"`}
-      </div>
+      {/* Dialog de confirmação para exclusão em lote */}
+      <AlertDialog open={showDeleteAllDialog} onOpenChange={setShowDeleteAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar exclusão em lote</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir {selectedDocuments.length} documento{selectedDocuments.length > 1 ? 's' : ''} selecionado{selectedDocuments.length > 1 ? 's' : ''}? 
+              Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteAll}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Excluir todos
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-      {/* Input de arquivo oculto */}
+      {/* Input oculto para upload de arquivo */}
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv"
-        onChange={handleFileChange}
+        accept=".csv,.xlsx,.xls"
+        onChange={handleFileUpload}
         style={{ display: 'none' }}
       />
 
       {/* Dialog de resultados da importação */}
       <ImportResultsDialog
-        isOpen={showImportResults}
-        onClose={() => setShowImportResults(false)}
         result={importResult}
+        open={showImportResults}
+        onOpenChange={setShowImportResults}
       />
     </div>
   );

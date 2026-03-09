@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { SEMANTIC_COMPARISON_CONFIG } from '@/config/semanticComparison';
 
 interface VacancyCandidateComparison {
   candidateId: string;
@@ -20,13 +19,16 @@ interface VacancyCandidateComparison {
 interface VacancyDocumentComparison {
   requirementId: string;
   documentName: string;
+  documentNameEnglish?: string; // Nome do documento em inglês
   documentCode: string;
+  sigla?: string; // Sigla do documento (mesmo formato que EnhancedDocumentsView)
   category: string;
   obligation: string;
   requiredHours: number;
   modality: string;
   status: 'Confere' | 'Parcial' | 'Pendente' | 'N/A - Matriz';
   validityStatus: 'Valido' | 'Vencido' | 'N/A';
+  validityDate?: string; // Data de validade do documento do candidato
   observations: string;
   candidateDocument?: {
     id: string;
@@ -230,268 +232,298 @@ const extractKeywords = (text: string): string[] => {
   return Array.from(keywords);
 };
 
-export const useVacancyCandidateComparison = (vacancyId: string) => {
-  const [comparisons, setComparisons] = useState<VacancyCandidateComparison[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const VACANCY_COMPARISON_QUERY_KEY = ['vacancy-candidate-comparison'] as const;
 
-  const fetchComparisons = async () => {
-    if (!vacancyId) return;
+async function fetchVacancyComparisons(
+  vacancyId: string,
+  queryClient: ReturnType<typeof useQueryClient>
+): Promise<VacancyCandidateComparison[]> {
+  if (!vacancyId) return [];
 
-    setLoading(true);
-    setError(null);
+  console.log('Iniciando busca de comparações para vaga:', vacancyId);
+  // 1. Buscar vaga e matriz
+  const { data: vacancy, error: vacancyError } = await supabase
+    .from('vacancies')
+    .select(`
+      id,
+      title,
+      matrix_id,
+      matrices!inner (
+        id,
+        cargo,
+        empresa
+      )
+    `)
+    .eq('id', vacancyId)
+    .single();
 
-    try {
-      console.log('Iniciando busca de comparações para vaga:', vacancyId);
-      // 1. Buscar vaga e matriz
-      const { data: vacancy, error: vacancyError } = await supabase
-        .from('vacancies')
-        .select(`
-          id,
-          title,
-          matrix_id,
-          matrices!inner (
-            id,
-            cargo,
-            empresa
-          )
-        `)
-        .eq('id', vacancyId)
-        .single();
+  if (vacancyError) throw vacancyError;
+  console.log('Vaga encontrada:', vacancy);
 
-      if (vacancyError) throw vacancyError;
-      console.log('Vaga encontrada:', vacancy);
+  // 2. Buscar candidatos da vaga
+  const { data: vacancyCandidates, error: candidatesError } = await supabase
+    .from('vacancy_candidates')
+    .select(`
+      candidates!inner (
+        id,
+        name
+      )
+    `)
+    .eq('vacancy_id', vacancyId);
 
-      // 2. Buscar candidatos da vaga
-      const { data: vacancyCandidates, error: candidatesError } = await supabase
-        .from('vacancy_candidates')
-        .select(`
-          candidates!inner (
-            id,
-            name
-          )
-        `)
-        .eq('vacancy_id', vacancyId);
+  if (candidatesError) throw candidatesError;
+  console.log('Candidatos encontrados:', vacancyCandidates);
 
-      if (candidatesError) throw candidatesError;
-      console.log('Candidatos encontrados:', vacancyCandidates);
+  // 3. Buscar requisitos da matriz com TODOS os campos necessários
+  const { data: matrixItems, error: matrixError } = await supabase
+    .from('matrix_items')
+    .select(`
+      id,
+      document_id,
+      obrigatoriedade,
+      modalidade,
+      carga_horaria,
+      documents_catalog (
+        id,
+        name,
+        nome_curso,
+        nome_ingles,
+        codigo,
+        sigla,
+        sigla_documento,
+        document_category,
+        group_name,
+        categoria
+      )
+    `)
+    .eq('matrix_id', vacancy.matrix_id);
 
-      // 3. Buscar requisitos da matriz
-      const { data: matrixItems, error: matrixError } = await supabase
-        .from('matrix_items')
-        .select(`
-          id,
-          document_id,
-          obrigatoriedade,
-          modalidade,
-          carga_horaria,
-          documents_catalog (
-            id,
-            name,
-            codigo,
-            document_category
-          )
-        `)
-        .eq('matrix_id', vacancy.matrix_id);
+  if (matrixError) throw matrixError;
+  console.log('Itens da matriz encontrados:', matrixItems);
 
-      if (matrixError) throw matrixError;
-      console.log('Itens da matriz encontrados:', matrixItems);
+  // 4. Processar cada candidato
+  const candidateComparisons: VacancyCandidateComparison[] = [];
 
-      // 4. Processar cada candidato
-      const candidateComparisons: VacancyCandidateComparison[] = [];
+  for (const vacancyCandidate of vacancyCandidates || []) {
+    const candidate = vacancyCandidate.candidates;
 
-      for (const vacancyCandidate of vacancyCandidates || []) {
-        const candidate = vacancyCandidate.candidates;
-        
-        // Buscar documentos do candidato
-        const { data: candidateDocs, error: docsError } = await supabase
-          .from('candidate_documents')
-          .select('*')
-          .eq('candidate_id', candidate.id);
+    // Buscar comparações da tabela document_comparisons (MESMA FONTE que EnhancedDocumentsView)
+    const { data: comparisons, error: compError } = await supabase
+      .from('document_comparisons')
+      .select('*')
+      .eq('candidate_id', candidate.id);
 
-        if (docsError) throw docsError;
+    if (compError) throw compError;
 
-        // Processar cada requisito da matriz
-        const documentComparisons: VacancyDocumentComparison[] = [];
-        let metCount = 0;
-        let partialCount = 0;
-        let pendingCount = 0;
+    // Buscar TODOS os documentos do candidato para verificar declaracao
+    // mesmo para itens não comparados
+    const { data: allCandidateDocs } = await supabase
+      .from('candidate_documents')
+      .select('id, document_name, codigo, carga_horaria_total, modality, expiry_date, declaracao, catalog_document_id, sigla_documento, tipo_de_codigo')
+      .eq('candidate_id', candidate.id);
 
-        for (const matrixItem of matrixItems || []) {
-          const catalogDoc = matrixItem.documents_catalog;
-          
-          // Pular itens que não têm documento válido no catálogo
-          if (!catalogDoc || !catalogDoc.id) {
-            continue;
-          }
-          
-          // Tentar encontrar documento correspondente
-          let matchedDoc = null;
-          let matchType: 'exact_id' | 'exact_code' | 'semantic_name' | 'none' = 'none';
-          let similarityScore = 0;
-          let observations = '';
+    // Criar mapas para encontrar documentos por diferentes critérios
+    const docByCatalogId: Record<string, typeof allCandidateDocs[0]> = {};
+    const docsBySigla: Record<string, typeof allCandidateDocs[0][]> = {};
+    const docsByTipoCodigo: Record<string, typeof allCandidateDocs[0][]> = {};
+    
+    (allCandidateDocs || []).forEach(d => {
+      if (d.catalog_document_id) {
+        docByCatalogId[d.catalog_document_id] = d;
+      }
+      if (d.sigla_documento) {
+        const sigla = d.sigla_documento.toLowerCase().trim();
+        if (!docsBySigla[sigla]) docsBySigla[sigla] = [];
+        docsBySigla[sigla].push(d);
+      }
+      if (d.tipo_de_codigo) {
+        const codigo = d.tipo_de_codigo.toLowerCase().trim();
+        if (!docsByTipoCodigo[codigo]) docsByTipoCodigo[codigo] = [];
+        docsByTipoCodigo[codigo].push(d);
+      }
+    });
 
-          // 1. Comparação por ID exato
-          matchedDoc = candidateDocs?.find(doc => 
-            doc.catalog_document_id === catalogDoc.id
-          );
-          if (matchedDoc) {
-            matchType = 'exact_id';
-            similarityScore = 1.0;
-          }
+    // Processar cada requisito da matriz
+    const documentComparisons: VacancyDocumentComparison[] = [];
 
-          // 2. Comparação por código
-          if (!matchedDoc && catalogDoc.codigo) {
-            matchedDoc = candidateDocs?.find(doc => {
-              const docCodigo = doc.codigo;
-              return docCodigo && 
-                docCodigo.toLowerCase().trim() === catalogDoc.codigo.toLowerCase().trim();
-            });
-            if (matchedDoc) {
-              matchType = 'exact_code';
-              similarityScore = 0.95;
-            }
-          }
+    for (const matrixItem of matrixItems || []) {
+      const catalogDoc = matrixItem.documents_catalog;
 
-          // 3. Comparação semântica básica (sem IA para evitar timeout)
-          if (!matchedDoc) {
-            let bestMatch = null;
-            let bestSimilarity = 0;
-
-            for (const candidateDoc of candidateDocs || []) {
-              const basicSimilarity = calculateBasicSimilarity(
-                candidateDoc.document_name,
-                catalogDoc.name
-              );
-              
-              if (basicSimilarity > bestSimilarity && basicSimilarity > 0.6) {
-                bestSimilarity = basicSimilarity;
-                bestMatch = candidateDoc;
-                observations = 'Comparação por palavras-chave similares';
-              }
-            }
-
-            if (bestMatch) {
-              matchedDoc = bestMatch;
-              matchType = 'semantic_name';
-              similarityScore = bestSimilarity;
-            }
-          }
-
-          // Determinar status
-          let status: 'Confere' | 'Parcial' | 'Pendente' | 'N/A - Matriz' = 'Pendente';
-          let validityStatus: 'Valido' | 'Vencido' | 'N/A' = 'N/A';
-
-          if (matchedDoc) {
-            // Verificar validade
-            if (matchedDoc.expiry_date) {
-              const expiry = new Date(matchedDoc.expiry_date);
-              const today = new Date();
-              validityStatus = expiry >= today ? 'Valido' : 'Vencido';
-            } else {
-              validityStatus = 'Valido';
-            }
-
-            // Verificar horas
-            if (matrixItem.carga_horaria && matrixItem.carga_horaria > 0) {
-              const actualHours = matchedDoc.carga_horaria_total || 0;
-              if (actualHours >= matrixItem.carga_horaria) {
-                status = 'Confere';
-                metCount++;
-              } else if (actualHours > 0) {
-                status = 'Parcial';
-                partialCount++;
-                observations = `Matriz exige ${matrixItem.carga_horaria}h; documento informa ${actualHours}h (inferior).`;
-              } else {
-                status = 'Parcial';
-                partialCount++;
-                observations = 'Horas não informadas no documento.';
-              }
-            } else {
-              status = 'Confere';
-              metCount++;
-            }
-
-            // Verificar modalidade
-            if (matrixItem.modalidade && matrixItem.modalidade !== matchedDoc.modality) {
-              if (status === 'Confere') {
-                status = 'Parcial';
-                metCount--;
-                partialCount++;
-              }
-              observations += observations ? ' ' : '';
-              observations += `Matriz exige modalidade ${matrixItem.modalidade}; documento informa ${matchedDoc.modality || 'N/A'}.`;
-            }
-          } else {
-            status = 'Pendente';
-            pendingCount++;
-            observations = 'Documento ausente.';
-          }
-
-          documentComparisons.push({
-            requirementId: matrixItem.id,
-            documentName: catalogDoc.name,
-            documentCode: catalogDoc.codigo || '',
-            category: catalogDoc.document_category || '',
-            obligation: matrixItem.obrigatoriedade || '',
-            requiredHours: matrixItem.carga_horaria || 0,
-            modality: matrixItem.modalidade || '',
-            status,
-            validityStatus,
-            observations,
-            candidateDocument: matchedDoc ? {
-              id: matchedDoc.id,
-              name: matchedDoc.document_name,
-              code: matchedDoc.codigo || '',
-              hours: matchedDoc.carga_horaria_total || 0,
-              modality: matchedDoc.modality || '',
-              expiryDate: matchedDoc.expiry_date || ''
-            } : undefined,
-            similarityScore,
-            matchType
-          });
-        }
-
-        const totalRequirements = documentComparisons.length;
-        const adherencePercentage = totalRequirements > 0 
-          ? Math.round((metCount / totalRequirements) * 100) 
-          : 0;
-
-        candidateComparisons.push({
-          candidateId: candidate.id,
-          candidateName: candidate.name,
-          vacancyId,
-          vacancyTitle: vacancy.title,
-          matrixId: vacancy.matrix_id,
-          matrixName: `${vacancy.matrices.cargo} - ${vacancy.matrices.empresa}`,
-          adherencePercentage,
-          totalRequirements,
-          metRequirements: metCount,
-          partialRequirements: partialCount,
-          pendingRequirements: pendingCount,
-          documents: documentComparisons
-        });
+      // Pular itens que não têm documento válido no catálogo
+      if (!catalogDoc || !catalogDoc.id) {
+        continue;
       }
 
-      console.log('Comparações concluídas:', candidateComparisons);
-      setComparisons(candidateComparisons);
+      // Buscar comparação na tabela document_comparisons (mesma lógica que EnhancedDocumentsView)
+      // Prioridade: CONFERE > PARCIAL > PENDENTE, depois por data mais recente
+      const allComparisons = comparisons?.filter(comp => comp.matrix_item_id === matrixItem.id) || [];
+      
+      // Função para obter prioridade do status (menor = maior prioridade)
+      const getStatusPriority = (status: string | null | undefined): number => {
+        if (status === 'CONFERE') return 0;
+        if (status === 'PARCIAL') return 1;
+        return 2; // PENDENTE ou qualquer outro
+      };
+      
+      const comparison = allComparisons.sort((a, b) => {
+        // Primeiro ordenar por prioridade de status
+        const priorityA = getStatusPriority(a.status);
+        const priorityB = getStatusPriority(b.status);
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
+        }
+        // Se mesmo status, ordenar por data mais antiga (primeiro documento comparado prevalece)
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateA - dateB;
+      })[0]; // Pegar a primeira (maior prioridade + mais recente)
 
-    } catch (err: any) {
-      console.error('Erro na comparação de vagas:', err);
-      setError(err.message || 'Erro ao carregar comparações');
-    } finally {
-      setLoading(false);
+      // Usar status da tabela document_comparisons (fonte única da verdade)
+      // Status na tabela é: 'CONFERE' | 'PARCIAL' | 'PENDENTE' (maiúsculas)
+      const statusFromTable = comparison?.status || 'PENDENTE';
+      // Converter para o formato usado no componente (primeira letra maiúscula)
+      const status = statusFromTable === 'CONFERE' ? 'Confere' :
+        statusFromTable === 'PARCIAL' ? 'Parcial' : 'Pendente';
+
+      // Buscar documento do candidato e verificar se é declaração
+      let candidateDocument = undefined;
+      let isDeclaracao = false;
+      
+      // 1. Se há comparação com documento vinculado, usar esse documento
+      if (comparison?.candidate_document_id) {
+        const candidateDoc = allCandidateDocs?.find(d => d.id === comparison.candidate_document_id);
+
+        if (candidateDoc) {
+          candidateDocument = {
+            id: candidateDoc.id,
+            name: candidateDoc.document_name,
+            code: candidateDoc.codigo || '',
+            hours: candidateDoc.carga_horaria_total || 0,
+            modality: candidateDoc.modality || '',
+            expiryDate: candidateDoc.expiry_date || ''
+          };
+          isDeclaracao = candidateDoc.declaracao === true;
+        }
+      } else {
+        // 2. Se não há comparação, tentar encontrar documento correspondente por ID do catálogo
+        if (catalogDoc.id && docByCatalogId[catalogDoc.id]) {
+          const matchedDoc = docByCatalogId[catalogDoc.id];
+          isDeclaracao = matchedDoc.declaracao === true;
+        }
+        // 3. Se não encontrou por ID, tentar por sigla
+        else if (catalogDoc.sigla_documento) {
+          const sigla = catalogDoc.sigla_documento.toLowerCase().trim();
+          const matchedDocs = docsBySigla[sigla];
+          if (matchedDocs && matchedDocs.length > 0) {
+            const docWithDeclaracao = matchedDocs.find(d => d.declaracao === true);
+            if (docWithDeclaracao) {
+              isDeclaracao = true;
+            }
+          }
+        }
+        // 4. Se não encontrou por sigla, tentar por código
+        else if (catalogDoc.codigo) {
+          const codigo = catalogDoc.codigo.toLowerCase().trim();
+          const matchedDocs = docsByTipoCodigo[codigo];
+          if (matchedDocs && matchedDocs.length > 0) {
+            const docWithDeclaracao = matchedDocs.find(d => d.declaracao === true);
+            if (docWithDeclaracao) {
+              isDeclaracao = true;
+            }
+          }
+        }
+      }
+
+      // Converter validity_status da tabela
+      const validityStatusFromTable = comparison?.validity_status;
+      const validityStatus = validityStatusFromTable === 'valid' ? 'Valido' :
+        validityStatusFromTable === 'expired' ? 'Vencido' : 'N/A';
+
+      // Montar observações com informação de declaração se aplicável
+      let observations = comparison?.observations || (status === 'Pendente' ? 'Documento ainda não comparado' : '');
+      if (isDeclaracao && observations && !observations.includes('Declaração')) {
+        observations = 'Declaração | ' + observations;
+      } else if (isDeclaracao && !observations) {
+        observations = 'Declaração';
+      }
+
+      documentComparisons.push({
+        requirementId: matrixItem.id,
+        // Usar nome_curso se disponível, senão usar name (compatibilidade com documentos antigos e novos)
+        documentName: catalogDoc.nome_curso || catalogDoc.name || '',
+        documentNameEnglish: catalogDoc.nome_ingles || undefined,
+        documentCode: catalogDoc.codigo || '',
+        // Usar sigla_documento se disponível, senão usar sigla (compatibilidade com documentos antigos e novos)
+        sigla: catalogDoc.sigla_documento || catalogDoc.sigla || '',
+        // Usar mesma lógica que EnhancedDocumentsView: document_category ou categoria
+        category: catalogDoc.document_category || catalogDoc.categoria || '',
+        obligation: matrixItem.obrigatoriedade || '',
+        requiredHours: matrixItem.carga_horaria || 0,
+        modality: matrixItem.modalidade || '',
+        status,
+        validityStatus,
+        validityDate: comparison?.validity_date, // Data de validade da comparação
+        observations,
+        candidateDocument,
+        similarityScore: comparison?.similarity_score,
+        matchType: comparison?.match_type as any
+      });
     }
-  };
 
-  useEffect(() => {
-    fetchComparisons();
-  }, [vacancyId]);
+    const totalRequirements = documentComparisons.length;
+    // Usar a mesma lógica do EnhancedDocumentsView: CONFERE conta 100%, PARCIAL conta 50%
+    const confereCount = documentComparisons.filter(doc => doc.status === 'Confere').length;
+    const parcialCount = documentComparisons.filter(doc => doc.status === 'Parcial').length;
+    const adherencePercentage = totalRequirements > 0
+      ? Math.round(((confereCount) + (parcialCount * 0.5)) / totalRequirements * 100)
+      : 0;
+
+    candidateComparisons.push({
+      candidateId: candidate.id,
+      candidateName: candidate.name,
+      vacancyId,
+      vacancyTitle: vacancy.title,
+      matrixId: vacancy.matrix_id,
+      matrixName: `${vacancy.matrices.cargo} - ${vacancy.matrices.empresa}`,
+      adherencePercentage,
+      totalRequirements,
+      metRequirements: confereCount,
+      partialRequirements: parcialCount,
+      pendingRequirements: documentComparisons.filter(doc => doc.status === 'Pendente').length,
+      documents: documentComparisons
+    });
+  }
+
+  console.log('Comparações concluídas:', candidateComparisons);
+  // Invalidar cache do useCandidateRequirementStatus para sincronizar os dados
+  const candidateIds = candidateComparisons.map(comp => comp.candidateId);
+  candidateIds.forEach(candidateId => {
+    queryClient.invalidateQueries({
+      queryKey: ['candidate-requirement-status', candidateId]
+    });
+  });
+
+  return candidateComparisons;
+}
+
+export const useVacancyCandidateComparison = (vacancyId: string) => {
+  const queryClient = useQueryClient();
+
+  const {
+    data: comparisons = [],
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: [...VACANCY_COMPARISON_QUERY_KEY, vacancyId],
+    queryFn: () => fetchVacancyComparisons(vacancyId, queryClient),
+    enabled: !!vacancyId,
+  });
 
   return {
     comparisons,
     loading,
-    error,
-    refetch: fetchComparisons
+    error: queryError ? (queryError as Error).message : null,
+    refetch,
   };
 };

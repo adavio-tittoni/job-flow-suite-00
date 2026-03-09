@@ -16,12 +16,24 @@ export interface Vacancy {
   created_at: string;
   updated_at: string;
   closed_at?: string;
+  company?: string;
+  role_title?: string;
+  matrix_id?: string;
+  salary?: number;
+  due_date?: string;
+  notes?: string;
+  candidates_count?: number;
+  recruiter_id?: string;
   // Campos calculados
-  candidates_count: number;
   matrices?: {
     cargo: string;
     empresa: string;
     versao_matriz: string | null;
+  } | null;
+  recruiter?: {
+    id: string;
+    name: string;
+    email: string;
   } | null;
 }
 
@@ -35,21 +47,47 @@ export const useVacancies = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: vacancies = [], isLoading } = useQuery({
+  const { data: vacancies = [], isLoading, refetch } = useQuery({
     queryKey: ["vacancies"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("vacancies")
-        .select("*")
+        .select(`
+          *,
+          vacancy_candidates(count)
+        `)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
       
-      // Mapear os dados com valores padrão
+      // Buscar perfis dos recrutadores
+      const recruiterIds = [...new Set((data || []).map(v => v.recruiter_id).filter(Boolean))];
+      let recruitersMap: Record<string, { id: string; name: string; email: string }> = {};
+      
+      if (recruiterIds.length > 0) {
+        const { data: profiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, name, email")
+          .in("id", recruiterIds);
+        
+        if (!profilesError && profiles) {
+          recruitersMap = profiles.reduce((acc, profile) => {
+            acc[profile.id] = {
+              id: profile.id,
+              name: profile.name,
+              email: profile.email
+            };
+            return acc;
+          }, {} as Record<string, { id: string; name: string; email: string }>);
+        }
+      }
+      
+      // Mapear os dados com valores padrão e contagem correta
       const vacanciesWithDefaults = (data || []).map(vacancy => ({
         ...vacancy,
-        candidates_count: 0, // Valor padrão por enquanto
-        matrices: null // Valor padrão por enquanto
+        candidates_count: vacancy.vacancy_candidates?.[0]?.count || 0,
+        matrices: null, // Valor padrão por enquanto
+        recruiter: vacancy.recruiter_id ? recruitersMap[vacancy.recruiter_id] || null : null
       }));
       
       return vacanciesWithDefaults as Vacancy[];
@@ -136,6 +174,7 @@ export const useVacancies = () => {
   return {
     vacancies,
     isLoading,
+    refetch,
     createVacancy,
     updateVacancy,
     deleteVacancy,

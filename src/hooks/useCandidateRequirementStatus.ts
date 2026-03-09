@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { normalizeString } from "@/utils/documentComparison";
 
 interface MatrixRequirement {
   id: string;
@@ -75,14 +76,14 @@ export interface NonRequiredDocument {
   group_name: string | null;
 }
 
-// Utility function to normalize strings for comparison
-const normalizeString = (str: string): string => {
-  return str
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, ''); // Remove accents
-};
+export interface RequirementStatusResult {
+  overall: OverallStatus;
+  departments: DepartmentStatus[];
+  obligations: ObligationStatus[];
+  pendingItems: RequirementStatus[];
+  nonRequiredDocuments: NonRequiredDocument[];
+}
+
 
 // Utility function to safely parse dates
 const parseDate = (dateString: string | null | undefined): Date | null => {
@@ -129,6 +130,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
   return useQuery({
     queryKey: ['candidate-requirement-status', candidateId],
     queryFn: async () => {
+      console.log('🔄 useCandidateRequirementStatus: Starting fresh calculation for candidate:', candidateId);
       console.log('🔄 Refreshing requirement status for candidate:', candidateId);
       // Fetch candidate to get matrix_id
       let candidate: { id: string; matrix_id: string | null } | null = null;
@@ -169,7 +171,8 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
             name,
             group_name,
             document_category,
-            codigo
+            codigo,
+            sigla_documento
           )
         `)
         .eq('matrix_id', candidate.matrix_id);
@@ -202,140 +205,84 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
         obrigatoriedade: r.obrigatoriedade 
       })));
       
-      const requirementStatuses: RequirementStatus[] = matrixRequirements
-        .filter(req => {
-          if (!req.obrigatoriedade) return true;
-          
-          const normalized = normalizeString(req.obrigatoriedade);
-          console.log(`🔍 Processing requirement: "${req.document.name}" with obrigatoriedade: "${req.obrigatoriedade}" (normalized: "${normalized}")`);
-          
-          // Include all obligation types - now we want to show all types
-          return true; // Show all obligation types in dashboard
-        })
-        .map(req => {
-          // Try to find matching candidate document
-          let matchedDoc = candidateDocuments?.find(doc => 
-            doc.catalog_document_id === req.document_id
+      const filteredRequirements = matrixRequirements.filter(req => {
+        if (!req.obrigatoriedade) return true;
+        
+        const normalized = normalizeString(req.obrigatoriedade);
+        console.log(`🔍 Processing requirement: "${req.document.name}" with obrigatoriedade: "${req.obrigatoriedade}" (normalized: "${normalized}")`);
+        
+        // Include all obligation types - now we want to show all types
+        return true; // Show all obligation types in dashboard
+      });
+
+      // Fetch document_comparisons to use as single source of truth
+      const { data: documentComparisonsData } = await supabase
+        .from('document_comparisons')
+        .select('*')
+        .eq('candidate_id', candidateId);
+
+      const documentComparisons = documentComparisonsData || [];
+
+      // USAR APENAS a tabela document_comparisons - SEM cálculos adicionais
+      const requirementStatuses: RequirementStatus[] = filteredRequirements.map(req => {
+        // Procurar comparação na tabela document_comparisons
+        const comparison = documentComparisons.find(
+          comp => comp.matrix_item_id === req.id
+        );
+
+        // Se existe comparação na tabela, usar SEUS dados
+        if (comparison) {
+          // Converter status da tabela para o formato do hook
+          let status: 'fulfilled' | 'partial' | 'pending';
+          if (comparison.status === 'CONFERE') {
+            status = 'fulfilled';
+          } else if (comparison.status === 'PARCIAL') {
+            status = 'partial';
+          } else {
+            status = 'pending';
+          }
+
+          // Buscar documento do candidato se houver ID vinculado
+          const matchedDoc = candidateDocuments?.find(
+            doc => doc.id === comparison.candidate_document_id
           );
 
-          // Fallback 1: match by codigo (custom document code)
-          if (!matchedDoc) {
-            // Get the codigo from the matrix document (from documents_catalog)
-            const matrixDocCodigo = req.document.codigo;
-            if (matrixDocCodigo) {
-              matchedDoc = candidateDocuments?.find(doc => {
-                const docCodigo = doc.codigo;
-                return docCodigo && normalizeString(docCodigo) === normalizeString(matrixDocCodigo);
-              });
-            }
-          }
-
-          // Fallback 2: match by normalized name
-          if (!matchedDoc) {
-            const reqDocName = normalizeString(req.document.name);
-            matchedDoc = candidateDocuments?.find(doc => {
-              const docName = normalizeString(doc.document_name);
-              return docName === reqDocName;
-            });
-          }
-
-          if (!matchedDoc) {
-            return {
-              requirementId: req.id,
-              documentId: req.document_id,
-              documentName: req.document.name,
-              groupName: req.document.group_name,
-              requiredHours: req.carga_horaria,
-              actualHours: null,
-              status: 'pending' as const,
-              observation: 'Documento ausente',
-              validityStatus: 'missing' as const,
-              existingCandidateDocument: undefined,
-              documentCategory: req.document.document_category || undefined,
-              modality: req.modalidade || undefined,
-              obrigatoriedade: req.obrigatoriedade
-            };
-          }
-
-          // Check validity - if no expiry_date, consider it N/A (not applicable)
-          const expiryDate = parseDate(matchedDoc.expiry_date);
-          let validityStatus: 'valid' | 'expired' | 'not_applicable' = 'not_applicable';
-          let isValidityOk = true;
-          
-          if (expiryDate) {
-            if (expiryDate < today) {
-              validityStatus = 'expired';
-              isValidityOk = false;
-            } else {
-              validityStatus = 'valid';
-            }
-          }
-          
-          // If document is expired, mark as pending
-          if (!isValidityOk) {
-            return {
-              requirementId: req.id,
-              documentId: req.document_id,
-              documentName: req.document.name,
-              groupName: req.document.group_name,
-              requiredHours: req.carga_horaria,
-              actualHours: matchedDoc.carga_horaria_total,
-              status: 'pending' as const,
-              observation: 'Documento vencido',
-              validityStatus,
-              existingCandidateDocument: matchedDoc,
-              documentCategory: req.document.document_category || undefined,
-              modality: req.modalidade || undefined,
-              obrigatoriedade: req.obrigatoriedade
-            };
-          }
-
-          // Check hours if required
-          if (req.carga_horaria && req.carga_horaria > 0) {
-            const actualHours = matchedDoc.carga_horaria_total || 0;
-            if (actualHours < req.carga_horaria) {
-              return {
-                requirementId: req.id,
-                documentId: req.document_id,
-                documentName: req.document.name,
-                groupName: req.document.group_name,
-                requiredHours: req.carga_horaria,
-                actualHours: actualHours,
-                status: 'partial' as const,
-                observation: actualHours <= 0 
-                  ? `Sem horas registradas, precisa ${req.carga_horaria}h` 
-                  : `Horas insuficientes: tem ${actualHours}h, precisa ${req.carga_horaria}h`,
-                validityStatus,
-                existingCandidateDocument: matchedDoc,
-                documentCategory: req.document.document_category || undefined,
-                modality: req.modalidade || undefined,
-                obrigatoriedade: req.obrigatoriedade
-              };
-            }
-          }
-
-          // Document is valid and meets requirements
-          let observation = 'Requisito atendido';
-          if (validityStatus === 'not_applicable') {
-            observation += ' (validade N/A)';
-          }
-          
           return {
             requirementId: req.id,
             documentId: req.document_id,
-            documentName: req.document.name,
-            groupName: req.document.group_name,
-            requiredHours: req.carga_horaria,
-            actualHours: matchedDoc.carga_horaria_total,
-            status: 'fulfilled' as const,
-            observation,
-            validityStatus,
+            documentName: comparison.nome_documento || req.document.name,
+            groupName: comparison.categoria || req.document.group_name,
+            requiredHours: comparison.horas_exigidas || req.carga_horaria,
+            actualHours: comparison.horas_candidato || matchedDoc?.carga_horaria_total || null,
+            status,
+            observation: comparison.observations || '-',
+            validityStatus: comparison.validity_status === 'valid' ? 'valid' : 
+                           comparison.validity_status === 'expired' ? 'expired' : 
+                           comparison.validity_status === 'missing' ? 'missing' : 'not_applicable',
             existingCandidateDocument: matchedDoc,
-            documentCategory: req.document.document_category || undefined,
-            modality: req.modalidade || undefined,
+            documentCategory: comparison.categoria || req.document.document_category || undefined,
+            modality: comparison.modalidade_candidato || req.modalidade || undefined,
             obrigatoriedade: req.obrigatoriedade
           };
-        });
+        }
+
+        // Se NÃO existe comparação na tabela, marcar como pendente
+        return {
+          requirementId: req.id,
+          documentId: req.document_id,
+          documentName: req.document.name,
+          groupName: req.document.group_name,
+          requiredHours: req.carga_horaria,
+          actualHours: null,
+          status: 'pending' as const,
+          observation: 'Documento ainda não comparado',
+          validityStatus: 'not_applicable',
+          existingCandidateDocument: undefined,
+          documentCategory: req.document.document_category || undefined,
+          modality: req.modalidade || undefined,
+          obrigatoriedade: req.obrigatoriedade
+        };
+      });
 
       // Map obligation types based on exact dropdown values
       const mapObligationType = (obrigatoriedade: string): 'mandatory' | 'recommended' | 'optional' | 'client_required' => {
@@ -388,7 +335,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
         fulfilled: stats.fulfilled,
         partial: stats.partial,
         pending: stats.pending,
-        adherencePercentage: stats.total > 0 ? Math.round((stats.fulfilled / stats.total) * 100) : 0
+        adherencePercentage: stats.total > 0 ? Math.round(((stats.fulfilled) + (stats.partial * 0.5)) / stats.total * 100) : 0
       }));
 
       // Calculate obligation statistics
@@ -422,7 +369,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
           partial: obligationStats.mandatory?.partial || 0,
           pending: obligationStats.mandatory?.pending || 0,
           adherencePercentage: obligationStats.mandatory?.total > 0 
-            ? Math.round((obligationStats.mandatory.fulfilled / obligationStats.mandatory.total) * 100) 
+            ? Math.round(((obligationStats.mandatory.fulfilled) + (obligationStats.mandatory.partial * 0.5)) / obligationStats.mandatory.total * 100) 
             : 0
         },
         {
@@ -433,7 +380,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
           partial: obligationStats.recommended?.partial || 0,
           pending: obligationStats.recommended?.pending || 0,
           adherencePercentage: obligationStats.recommended?.total > 0 
-            ? Math.round((obligationStats.recommended.fulfilled / obligationStats.recommended.total) * 100) 
+            ? Math.round(((obligationStats.recommended.fulfilled) + (obligationStats.recommended.partial * 0.5)) / obligationStats.recommended.total * 100) 
             : 0
         },
         {
@@ -444,7 +391,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
           partial: obligationStats.optional?.partial || 0,
           pending: obligationStats.optional?.pending || 0,
           adherencePercentage: obligationStats.optional?.total > 0 
-            ? Math.round((obligationStats.optional.fulfilled / obligationStats.optional.total) * 100) 
+            ? Math.round(((obligationStats.optional.fulfilled) + (obligationStats.optional.partial * 0.5)) / obligationStats.optional.total * 100) 
             : 0
         },
         {
@@ -455,14 +402,14 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
           partial: obligationStats.client_required?.partial || 0,
           pending: obligationStats.client_required?.pending || 0,
           adherencePercentage: obligationStats.client_required?.total > 0 
-            ? Math.round((obligationStats.client_required.fulfilled / obligationStats.client_required.total) * 100) 
+            ? Math.round(((obligationStats.client_required.fulfilled) + (obligationStats.client_required.partial * 0.5)) / obligationStats.client_required.total * 100) 
             : 0
         }
       ];
 
       console.log('📈 Final obligations:', obligations);
 
-      // Calculate overall statistics
+      // Calculate overall statistics (parcial conta 50% para aderência)
       const overall: OverallStatus = {
         total: requirementStatuses.length,
         fulfilled: requirementStatuses.filter(r => r.status === 'fulfilled').length,
@@ -470,7 +417,24 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
         pending: requirementStatuses.filter(r => r.status === 'pending').length,
         adherencePercentage: 0
       };
-      overall.adherencePercentage = overall.total > 0 ? Math.round((overall.fulfilled / overall.total) * 100) : 0;
+      // Parcial conta 50% para aderência, fulfilled conta 100%
+      overall.adherencePercentage = overall.total > 0 
+        ? Math.round(((overall.fulfilled) + (overall.partial * 0.5)) / overall.total * 100)
+        : 0;
+
+      console.log('📊 useCandidateRequirementStatus - Overall calculation:', {
+        candidateId,
+        total: overall.total,
+        fulfilled: overall.fulfilled,
+        partial: overall.partial,
+        pending: overall.pending,
+        adherencePercentage: overall.adherencePercentage,
+        requirementStatuses: requirementStatuses.map(r => ({
+          documentName: r.documentName,
+          status: r.status,
+          observation: r.observation
+        }))
+      });
 
       // Get pending items (pending + partial)
       const pendingItems = requirementStatuses.filter(r => r.status === 'pending' || r.status === 'partial');
@@ -502,5 +466,7 @@ export const useCandidateRequirementStatus = (candidateId: string) => {
     staleTime: 0,
     refetchOnMount: 'always',
     refetchOnReconnect: 'always',
+    refetchOnWindowFocus: true,
+    cacheTime: 0
   });
 };
