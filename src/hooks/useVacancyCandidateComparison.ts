@@ -372,10 +372,10 @@ async function fetchVacancyComparisons(
         if (priorityA !== priorityB) {
           return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
         }
-        // Se mesmo status, ordenar por data mais recente
+        // Se mesmo status, ordenar por data mais antiga (primeiro documento comparado prevalece)
         const dateA = new Date(a.created_at || 0).getTime();
         const dateB = new Date(b.created_at || 0).getTime();
-        return dateB - dateA;
+        return dateA - dateB;
       })[0]; // Pegar a primeira (maior prioridade + mais recente)
 
       // Usar status da tabela document_comparisons (fonte única da verdade)

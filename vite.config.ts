@@ -78,6 +78,7 @@ export default defineConfig({
       '@tanstack/react-query',
       '@supabase/supabase-js',
       'lucide-react',
+      '@hello-pangea/dnd',
     ],
   },
 });

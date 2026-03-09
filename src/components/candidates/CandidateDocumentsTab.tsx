@@ -860,10 +860,10 @@ export const CandidateDocumentsTab = ({ candidateId, candidateName }: CandidateD
         if (priorityA !== priorityB) {
           return priorityA - priorityB; // Menor prioridade primeiro (CONFERE = 0)
         }
-        // Se mesmo status, ordenar por data mais recente
+        // Se mesmo status, ordenar por data mais antiga (primeiro documento comparado prevalece)
         const dateA = new Date(a.created_at || 0).getTime();
         const dateB = new Date(b.created_at || 0).getTime();
-        return dateB - dateA;
+        return dateA - dateB;
       });
       
       // O primeiro é o "vencedor"
