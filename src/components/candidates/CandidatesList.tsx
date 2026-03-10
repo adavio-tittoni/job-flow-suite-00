@@ -11,8 +11,6 @@ import { usePaginatedCandidates } from "@/hooks/usePaginatedCandidates";
 import type { Candidate } from "@/hooks/useCandidates";
 import { CandidateForm } from "./CandidateForm";
 import { useNavigate } from "react-router-dom";
-import { useToast } from "@/hooks/use-toast";
-import { updateCandidateDocumentCodes } from "@/utils/updateCandidateDocumentCodes";
 
 // Debounce hook for search optimization
 function useDebounce<T>(value: T, delay: number): T {
@@ -33,11 +31,9 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export const CandidatesList = () => {
   const navigate = useNavigate();
-  const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [isUpdatingCodes, setIsUpdatingCodes] = useState(false);
   const [pageSize, setPageSize] = useState(20);
 
   // Debounce search to avoid excessive API calls
@@ -111,33 +107,6 @@ export const CandidatesList = () => {
     setSelectedCandidate(null);
   };
 
-  const handleUpdateCodes = async () => {
-    setIsUpdatingCodes(true);
-    try {
-      const result = await updateCandidateDocumentCodes();
-      if (result.success) {
-        toast({
-          title: "Sucesso",
-          description: `${result.updatedCount} documentos atualizados com códigos do catálogo.`,
-        });
-      } else {
-        toast({
-          title: "Erro",
-          description: "Erro ao atualizar códigos dos documentos.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Erro",
-        description: "Erro ao atualizar códigos dos documentos.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsUpdatingCodes(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <Card>
@@ -163,13 +132,12 @@ export const CandidatesList = () => {
             </div>
             <div className="flex gap-2">
               <Button 
-                onClick={handleUpdateCodes}
-                disabled={isUpdatingCodes}
+                onClick={() => window.location.reload()}
                 variant="outline"
                 className="flex items-center gap-2"
               >
-                <RefreshCw className={`h-4 w-4 ${isUpdatingCodes ? 'animate-spin' : ''}`} />
-                {isUpdatingCodes ? 'Atualizando...' : 'Atualizar Códigos'}
+                <RefreshCw className="h-4 w-4" />
+                Atualizar Candidatos
               </Button>
               <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
                 <DialogTrigger asChild>

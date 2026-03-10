@@ -63,7 +63,7 @@ const calculateBasicSimilarity = (text1: string, text2: string): number => {
   const keywords1 = extractKeywords(normalized1);
   const keywords2 = extractKeywords(normalized2);
   
-  const intersection = new Set([...keywords1].filter(x => keywords2.has(x)));
+  const intersection = new Set(keywords1.filter(x => keywords2.includes(x)));
   const union = new Set([...keywords1, ...keywords2]);
   
   if (union.size === 0) return 0;
@@ -149,6 +149,7 @@ export const updateCandidateDocumentCodes = async () => {
 
   } catch (error) {
     console.error('Erro na atualização de códigos:', error);
-    return { success: false, error };
+    const message = (error as { message?: string })?.message ?? (error instanceof Error ? error.message : String(error));
+    return { success: false, error, errorMessage: message };
   }
 };

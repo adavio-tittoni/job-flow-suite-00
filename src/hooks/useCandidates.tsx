@@ -438,35 +438,40 @@ export const useCandidateDocuments = (candidateId: string) => {
 
   const deleteDocument = useMutation({
     mutationFn: async (id: string) => {
-      // Remover vínculos em document_comparisons antes de deletar o documento
-      await supabase
-        .from("document_comparisons")
-        .delete()
-        .eq("candidate_document_id", id);
-
-      // Primeiro, buscar o documento para obter o file_url
+      // 1. Buscar o documento ANTES de deletar (para obter file_url e remover do storage)
       const { data: document, error: fetchError } = await supabase
         .from("candidate_documents")
         .select("file_url")
         .eq("id", id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
+      if (!document) {
+        throw new Error("Documento não encontrado");
+      }
 
-      // Deletar o arquivo do bucket candidate-documents no Supabase Storage
-      if (document?.file_url) {
+      // 2. Remover vínculos em document_comparisons
+      const { error: comparisonsError } = await supabase
+        .from("document_comparisons")
+        .delete()
+        .eq("candidate_document_id", id);
+
+      if (comparisonsError) throw comparisonsError;
+
+      // 3. Deletar o arquivo do bucket candidate-documents no Supabase Storage
+      if (document.file_url) {
         const storagePath = getStoragePathFromFileUrl(document.file_url);
         if (storagePath) {
           const { error: storageError } = await supabase.storage
             .from("candidate-documents")
             .remove([storagePath]);
           if (storageError) {
-            console.warn("[useCandidateDocuments] Erro ao deletar arquivo do Storage:", storageError);
+            throw new Error(`Falha ao remover arquivo do Storage: ${storageError.message}`);
           }
         }
       }
 
-      // Deletar o registro do banco de dados
+      // 4. Deletar o registro do banco de dados
       const { error } = await supabase
         .from("candidate_documents")
         .delete()
@@ -477,6 +482,8 @@ export const useCandidateDocuments = (candidateId: string) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["candidate-documents", candidateId] });
       queryClient.invalidateQueries({ queryKey: ["candidate-requirement-status", candidateId] });
+      queryClient.invalidateQueries({ queryKey: ["document-comparisons", candidateId] });
+      queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === "vacancy-candidate-comparison" });
       toast({
         title: "Documento excluído com sucesso",
       });
@@ -514,7 +521,7 @@ export const useDeleteCandidateDocument = () => {
     mutationFn: async ({ candidateId, documentId }: DeleteCandidateDocumentVariables) => {
       console.log("[useDeleteCandidateDocument] Iniciando exclusão:", { candidateId, documentId });
 
-      // 1. Buscar file_url antes de deletar (para remover do storage depois)
+      // 1. Buscar documento (file_url necessário para remover do storage)
       const { data: document, error: fetchErr } = await supabase
         .from("candidate_documents")
         .select("file_url")
@@ -526,10 +533,10 @@ export const useDeleteCandidateDocument = () => {
         throw fetchErr;
       }
       if (!document) {
-        console.warn("[useDeleteCandidateDocument] Documento não encontrado (id:", documentId, "). Removendo apenas document_comparisons.");
+        throw new Error("Documento não encontrado");
       }
 
-      // 2. Remover vínculos em document_comparisons (permite deletar o documento depois)
+      // 2. Remover vínculos em document_comparisons
       const { error: comparisonsError } = await supabase
         .from("document_comparisons")
         .delete()
@@ -539,35 +546,28 @@ export const useDeleteCandidateDocument = () => {
         console.error("[useDeleteCandidateDocument] Erro ao deletar document_comparisons:", comparisonsError);
         throw comparisonsError;
       }
-      console.log("[useDeleteCandidateDocument] document_comparisons removidos para candidate_document_id:", documentId);
 
-      // 3. Deletar o registro na tabela candidate_documents (obrigatório)
-      const { error: deleteError } = await supabase
-        .from("candidate_documents")
-        .delete()
-        .eq("id", documentId);
-
-      if (deleteError) {
-        console.error("[useDeleteCandidateDocument] Erro ao deletar candidate_documents:", deleteError);
-        throw new Error(`Falha ao excluir documento no banco: ${deleteError.message}`);
-      }
-      console.log("[useDeleteCandidateDocument] Registro candidate_documents excluído:", documentId);
-
-      // 4. Remover arquivo do bucket candidate-documents no Supabase Storage (S3)
-      if (document?.file_url) {
+      // 3. Remover arquivo do bucket candidate-documents no Supabase Storage (ANTES de deletar o registro)
+      if (document.file_url) {
         const storagePath = getStoragePathFromFileUrl(document.file_url);
         if (storagePath) {
           const { error: storageError } = await supabase.storage
             .from("candidate-documents")
             .remove([storagePath]);
           if (storageError) {
-            console.error("[useDeleteCandidateDocument] Erro ao deletar arquivo do Storage:", storageError);
-          } else {
-            console.log("[useDeleteCandidateDocument] Arquivo removido do Storage:", storagePath);
+            throw new Error(`Falha ao remover arquivo do Storage: ${storageError.message}`);
           }
-        } else {
-          console.warn("[useDeleteCandidateDocument] file_url não pôde ser convertido em path do Storage:", document.file_url);
         }
+      }
+
+      // 4. Deletar o registro na tabela candidate_documents
+      const { error: deleteError } = await supabase
+        .from("candidate_documents")
+        .delete()
+        .eq("id", documentId);
+
+      if (deleteError) {
+        throw new Error(`Falha ao excluir documento no banco: ${deleteError.message}`);
       }
 
       return { candidateId, documentId };
@@ -578,6 +578,8 @@ export const useDeleteCandidateDocument = () => {
       queryClient.invalidateQueries({ queryKey: ["document-comparisons", variables.candidateId] });
       if (variables.vacancyId) {
         queryClient.invalidateQueries({ queryKey: ["vacancy-candidate-comparison", variables.vacancyId] });
+      } else {
+        queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === "vacancy-candidate-comparison" });
       }
       toast({
         title: "Documento excluído com sucesso",

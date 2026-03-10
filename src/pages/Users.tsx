@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Search, Edit, Trash2, User } from "lucide-react";
+import { Plus, Search, Edit, Trash2, User, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -198,10 +198,20 @@ const Users = () => {
           </p>
         </div>
         
-        <Button onClick={() => navigate('/users/new')}>
-          <Plus className="mr-2 h-4 w-4" />
-          Novo usuário
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => window.location.reload()}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Atualizar Usuários
+          </Button>
+          <Button onClick={() => navigate('/users/new')}>
+            <Plus className="mr-2 h-4 w-4" />
+            Novo usuário
+          </Button>
+        </div>
       </div>
 
       <Card className="mb-6">
